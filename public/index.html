@@ -3,86 +3,86 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh 用量总览 · DeepSeek Harness</title>
+<title>dsh 用量信息 · DeepSeek Harness</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="wrap">
-  <div class="brand-row">
-    <div class="brand">dsh 用量总览 <span class="sub">DeepSeek Harness</span></div>
+  <div class="page-head">
+    <div class="brand">用量信息</div>
+    <div class="page-note">所有日期均按 GMT+8 时间显示，数据可能有 5 分钟延迟 <span class="info" title="统计口径：DeepSeek 官方模型（DeepSeek-V4.1-Flash / V4-Flash / V4-Pro / V4-Flash-Vision-Exp）；费用按官方价格表分时估算">ⓘ</span></div>
   </div>
 
   <div id="emptyBanner" class="card empty" style="display:none">未找到 dsh 会话记录</div>
 
-  <!-- 顶部融合卡：余额 + 时间范围 + 统计 -->
-  <div class="card" id="overviewCard">
-    <div class="bal-row">
-      <div class="bal-left">
-        <span class="dot" id="balDot"></span>
-        <span class="bal-title">DeepSeek API 余额</span>
-        <span class="bal-val" id="balVal">--</span>
-        <span class="bal-sub" id="balSub"></span>
+  <div class="top-cards">
+    <div class="tcard">
+      <div class="tl">充值余额</div>
+      <div class="trow">
+        <div class="tv" id="balVal">--</div>
+        <a class="link" href="https://platform.deepseek.com/topup" target="_blank" rel="noreferrer">去充值</a>
+        <a class="link" href="#" id="keyLink">设置 Key</a>
       </div>
-      <div class="bal-right">
-        <span class="lbl">时间范围</span>
-        <div class="seg" id="rangeSeg">
-          <button data-range="1">今日</button>
-          <button data-range="7" class="on">近 7 日</button>
-          <button data-range="30">近 30 日</button>
-        </div>
-        <button class="btn small" id="refreshBtn">⟳</button>
-        <button class="btn small" id="balKeyBtn">设置 Key</button>
-      </div>
+      <div class="tsub" id="balSub"></div>
     </div>
-    <div class="ov-sep"></div>
-    <div class="tiles four" id="activityTiles"></div>
+    <div class="tcard">
+      <div class="tl">累计消费金额 <span class="sub">(估算)</span></div>
+      <div class="trow">
+        <div class="tv" id="totalCostVal">--</div>
+      </div>
+      <div class="tsub">按官方价格表分时估算，可在「单价设置」中调整</div>
+    </div>
+  </div>
+
+  <div class="filter-row">
+    <span class="lbl">时间维度</span>
+    <div class="seg" id="rangeSeg">
+      <button data-range="1">今天</button>
+      <button data-range="7" class="on">近 7 天</button>
+      <button data-range="30">近 30 天</button>
+    </div>
+    <button class="btn small" id="exportBtn">导出</button>
+    <button class="btn small" id="refreshBtn">⟳</button>
+    <button class="btn small" id="priceBtn">单价设置</button>
+  </div>
+
+  <div class="stat-cards">
+    <div class="scard">
+      <div class="tl">消费金额 <span class="sub">(估算)</span></div>
+      <div class="tv" id="statCost">--</div>
+    </div>
+    <div class="scard">
+      <div class="tl">API 请求次数</div>
+      <div class="tv" id="statReqs">--</div>
+    </div>
+    <div class="scard">
+      <div class="tl">Tokens</div>
+      <div class="tv" id="statTokens">--</div>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <div class="card-title">用量图表</div>
-      <div class="seg" id="chartTabSeg">
-        <button data-tab="trend" class="on">每日 Token 趋势</button>
-        <button data-tab="donut">模型用量</button>
+      <div class="card-title">消费金额（CNY · 估算）<span class="sub" id="costChartTotal"></span></div>
+      <div class="seg" id="dimSeg">
+        <button data-dim="model" class="on">模型</button>
+        <button data-dim="tool">工具</button>
       </div>
     </div>
-    <div id="trendPane">
-      <div class="legend" id="trendLegend"></div>
-      <div id="trendChart" class="chart"></div>
-    </div>
-    <div id="donutPane" class="donut-wrap" style="display:none">
-      <div id="donut" class="donut"></div>
-      <div id="donutLegend" class="mrows"></div>
-    </div>
+    <div class="legend" id="costLegend" style="margin-bottom:8px"></div>
+    <div id="costChart" class="chart"></div>
   </div>
 
-  <div class="card">
-    <div class="card-head">
-      <div class="toggles">
-        <div class="seg" id="unitSeg">
-          <button data-unit="tokens" class="on">Token 消耗</button>
-          <button data-unit="cost">费用估算</button>
-        </div>
-        <div class="seg" id="dimSeg">
-          <button data-dim="model" class="on">模型</button>
-          <button data-dim="tool">工具</button>
-        </div>
-      </div>
-      <button class="btn small" id="priceBtn" style="display:none">单价设置</button>
-    </div>
-    <div class="legend" id="barLegend" style="margin-bottom:8px"></div>
-    <div class="bar-total" id="barTotal"></div>
-    <div id="barChart" class="chart"></div>
-  </div>
+  <div id="modelSections"></div>
 
   <div class="card">
     <div class="card-head">
       <div class="card-title">系统健康度</div>
-      <div class="lbl" id="healthRange">近 7 日</div>
+      <div class="lbl" id="healthRange">今天</div>
     </div>
     <div class="legend" id="healthLegend" style="margin-bottom:6px"></div>
     <div id="healthChart" class="chart"></div>
-    <div class="note">各模型高峰期均 Decode 速度（tokens/s，按流式输出加权平均；今日视图按小时）</div>
+    <div class="note">各模型高峰期均 Decode 速度（tokens/s，按流式输出加权平均；今天视图按小时）</div>
   </div>
 
   <div class="foot" id="foot"></div>
@@ -104,7 +104,7 @@
 </dialog>
 
 <dialog id="priceDlg">
-  <div class="dlg-title">费用估算单价 <span class="sub">（¥ / 百万 tokens，仅保存在本浏览器）</span></div>
+  <div class="dlg-title">自定义单价 <span class="sub">（¥ / 百万 tokens，留空使用官方分时价；仅保存在本浏览器）</span></div>
   <div id="priceRows"></div>
   <div class="dlg-foot">
     <button class="btn" id="priceCancel">取消</button>

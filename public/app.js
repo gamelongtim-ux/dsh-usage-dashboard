@@ -1,8 +1,8 @@
 'use strict';
-/* dsh 用量总览 —— 纯前端，无依赖，图表手写 SVG。
-   主题：从 dsh 宿主界面同步 --dsw-* 变量到本页 --u-*（Light/Dark/System 自动跟随）；
-   独立运行时使用 :root 里的暗色兜底值。
-   粒度：「今日」视图按小时（24 桶），近 7 日 / 近 30 日按天。 */
+/* dsh 用量信息 —— DeepSeek 开放平台「用量信息」同款布局，数据来自 dsh 会话日志。
+   主题：从 dsh 宿主界面同步 --dsw-* 变量到本页 --u-*（Light/Dark/System 自动跟随）。
+   粒度：「今天」视图按小时（24 桶），近 7 天 / 近 30 天按天。
+   计费：官方价格表分时估算（高峰/空闲），可在「单价设置」按模型覆盖。 */
 
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
@@ -16,9 +16,8 @@ const PALETTE = ['#4C8DFF', '#3ECF8E', '#A78BFA', '#F87171', '#FB923C', '#22D3EE
 const OTHER_COLOR = '#8b929a';
 
 let DATA = null;
-let RANGE = 7;
-let barDim = 'model', barUnit = 'tokens';
-let chartTab = 'trend';
+let RANGE = 1;
+let barDim = 'model';
 const hiddenBars = new Set();
 
 /* ---------------- 格式化 ---------------- */
@@ -34,7 +33,7 @@ function fmtMoney(n, currency) {
   const sym = currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : (currency ? currency + ' ' : '');
   return sym + (Math.abs(n) >= 100 ? trim1(n) : n.toFixed(2));
 }
-function fmtCost(n) { return '¥' + (n >= 100 ? trim1(n) : n >= 1 ? n.toFixed(2) : n.toFixed(3)); }
+function fmtCost(n) { return '¥' + (Math.abs(n) >= 100 ? trim1(n) : n >= 1 ? n.toFixed(2) : n.toFixed(3)); }
 function fmtDur(ms) {
   const m = Math.round(ms / 60000);
   const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
@@ -71,25 +70,21 @@ function todayKeyStr() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-/* 今日 24 个小时桶（无数据补零），hour 形如 '2026-09-17T14:00' */
 function todayHours() {
   const map = new Map((DATA.hours || []).map(h => [h.date, h]));
   const tk = todayKeyStr();
   const out = [];
   for (let h = 0; h < 24; h++) {
     const key = tk + 'T' + String(h).padStart(2, '0') + ':00';
-    const src = map.get(key);
-    out.push(src || { date: key, byModel: {}, byTool: {} });
+    out.push(map.get(key) || { date: key, byModel: {}, byTool: {} });
   }
   return out;
 }
-/* 当前范围的数据桶：今日=按小时，其余=按天 */
 function bucketDays() {
   return RANGE === 1 ? officialDays(todayHours()) : officialDays(rangeDays());
 }
 
-/* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名，
-   非 deepseek 官方模型返回 null（不参与统计）。 */
+/* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名 */
 function normalizeModel(name) {
   const m = String(name || '').toLowerCase();
   if (!m.startsWith('deepseek-')) return null;
@@ -97,10 +92,8 @@ function normalizeModel(name) {
   if (m.includes('vision')) return 'DeepSeek-V4-Flash-Vision-Exp';
   if (m.includes('v4-pro') || m.includes('pro')) return 'DeepSeek-V4-Pro';
   if (m.includes('v4-flash') || m === 'deepseek-v4') return 'DeepSeek-V4-Flash';
-  // 官方文档：未识别的遗留 id 由 DeepSeek-V4.1-Flash 服务
   return 'DeepSeek-V4.1-Flash';
 }
-/* 官方模型过滤视图：tokens/命中率等口径只计官方模型（归一化后）；工具统计保持全量 */
 function officialDays(days) {
   return days.map(d => {
     const bm = {};
@@ -108,8 +101,8 @@ function officialDays(days) {
     for (const [m, v] of Object.entries(d.byModel || {})) {
       const n = normalizeModel(m);
       if (!n) continue;
-      const t = bm[n] || (bm[n] = { tokens: 0, input: 0, output: 0, cacheRead: 0, spanMs: 0, spanTokens: 0 });
-      for (const k of ['tokens', 'input', 'output', 'cacheRead', 'spanMs', 'spanTokens']) t[k] += v[k] || 0;
+      const t = bm[n] || (bm[n] = { tokens: 0, input: 0, output: 0, cacheRead: 0, spanMs: 0, spanTokens: 0, reqs: 0 });
+      for (const k of ['tokens', 'input', 'output', 'cacheRead', 'spanMs', 'spanTokens', 'reqs']) t[k] += v[k] || 0;
       tokens += v.tokens || 0;
       input += v.input || 0;
       cacheRead += v.cacheRead || 0;
@@ -119,36 +112,91 @@ function officialDays(days) {
 }
 function modelTotalsOf(days) {
   const map = new Map();
-  for (const d of days) for (const [m, v] of Object.entries(d.ofByModel)) map.set(m, (map.get(m) || 0) + (v.tokens || 0));
-  return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([name, tokens]) => ({ name, tokens }));
+  for (const d of days) for (const [m, v] of Object.entries(d.ofByModel)) {
+    const t = map.get(m) || { tokens: 0, reqs: 0 };
+    t.tokens += v.tokens || 0;
+    t.reqs += v.reqs || 0;
+    map.set(m, t);
+  }
+  return [...map.entries()].sort((a, b) => b[1].tokens - a[1].tokens).map(([name, t]) => ({ name, ...t }));
 }
 function toolTotalsInRange(days) {
   const map = new Map();
   for (const d of days) for (const t in d.byTool) map.set(t, (map.get(t) || 0) + d.byTool[t]);
   return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
 }
-function sumField(days, f) { return days.reduce((s, d) => s + (d[f] || 0), 0); }
 function hitRate(days) {
   const hit = sumField(days, 'ofCacheRead'), miss = sumField(days, 'ofInput');
   const tot = hit + miss;
   return tot > 0 ? hit / tot : null;
 }
+function sumField(days, f) { return days.reduce((s, d) => s + (d[f] || 0), 0); }
+
+/* ---------------- 计费（官方价格表分时估算） ---------------- */
+/* 官方价格（¥/百万 tokens）：高峰=周一至五 9:00-12:00、14:00-18:00（北京时间）；空闲为高峰一半。
+   遗留 id（deepseek-v4-flash* 等）按官方说明由 V4.1-Flash 同价服务。 */
+const OFFICIAL_PRICES = {
+  'DeepSeek-V4.1-Flash': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
+  'DeepSeek-V4-Flash': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
+  'DeepSeek-V4-Flash-Vision-Exp': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
+  'DeepSeek-V4-Pro': { hitP: 0.3, hitO: 0.15, missP: 9, missO: 4.5, outP: 27, outO: 13.5 },
+};
 function priceTable() {
   try { return JSON.parse(localStorage.getItem('dshPrices_v1') || '{}'); } catch (_) { return {}; }
 }
-function modelCost(day, model) {
-  const p = priceTable()[model];
-  const m = day.ofByModel[model];
-  if (!p || !m) return 0;
-  return ((m.input || 0) * (p.input || 0) + (m.cacheRead || 0) * (p.cacheRead || 0) + (m.output || 0) * (p.output || 0)) / 1e6;
+function priceTableEmpty() { return !Object.keys(priceTable()).length; }
+function isPeakLocal(dateLike) {
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  const day = d.getDay(), h = d.getHours();
+  return day >= 1 && day <= 5 && ((h >= 9 && h < 12) || (h >= 14 && h < 18));
 }
-function priceTableEmpty() {
-  const t = priceTable();
-  return !Object.values(t).some(p => (p.input || 0) + (p.cacheRead || 0) + (p.output || 0) > 0);
+/** 单桶费用估算：优先用户自定义单价（平价），否则官方分时价。 */
+function bucketCost(day) {
+  let cost = 0;
+  for (const [m, v] of Object.entries(day.ofByModel || {})) {
+    const custom = priceTable()[m];
+    if (custom) {
+      cost += ((v.input || 0) * (custom.input || 0) + (v.cacheRead || 0) * (custom.cacheRead || 0) + (v.output || 0) * (custom.output || 0)) / 1e6;
+      continue;
+    }
+    const dp = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+    const peak = isPeakLocal(day.date);
+    const miss = peak ? dp.missP : dp.missO;
+    const hit = peak ? dp.hitP : dp.hitO;
+    const out = peak ? dp.outP : dp.outO;
+    cost += ((v.input || 0) * miss + (v.cacheRead || 0) * hit + (v.output || 0) * out) / 1e6;
+  }
+  return cost;
+}
+/** 单模型单桶费用 */
+function modelCost(day, model) {
+  const v = day.ofByModel[model];
+  if (!v) return 0;
+  return bucketCost({ date: day.date, ofByModel: { [model]: v } });
+}
+/** 天桶费用：按星期的高峰时长占比混合高峰/空闲价（小时桶则精确分时）。 */
+function dayCost(day) {
+  if (day.date && day.date.includes('T')) return bucketCost(day);
+  const d = new Date(day.date + 'T00:00:00');
+  const weekday = d.getDay() >= 1 && d.getDay() <= 5;
+  const f = weekday ? 7 / 24 : 0; // 高峰小时占比
+  let cost = 0;
+  for (const [m, v] of Object.entries(day.ofByModel || {})) {
+    const custom = priceTable()[m];
+    if (custom) {
+      cost += ((v.input || 0) * (custom.input || 0) + (v.cacheRead || 0) * (custom.cacheRead || 0) + (v.output || 0) * (custom.output || 0)) / 1e6;
+      continue;
+    }
+    const dp = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+    const miss = f * dp.missP + (1 - f) * dp.missO;
+    const hit = f * dp.hitP + (1 - f) * dp.hitO;
+    const out = f * dp.outP + (1 - f) * dp.outO;
+    cost += ((v.input || 0) * miss + (v.cacheRead || 0) * hit + (v.output || 0) * out) / 1e6;
+  }
+  return cost;
 }
 
-/* ---------------- 主题桥：同步 dsh 宿主变量 ----------------
-   取值优先级：宿主变量（带对比度校验）→ 宿主弹窗实际背景色 → 暗色兜底。 */
+/* ---------------- 主题桥：同步 dsh 宿主变量 ---------------- */
 const THEME_VARS = {
   bg: ['--dsw-specific-sidebar-fill', '--dsw-alias-bg-layer-2'],
   card: ['--dsw-alias-bg-layer-3'],
@@ -188,7 +236,6 @@ function contrast(a, b) {
   const hi = Math.max(la, lb), lo = Math.min(la, lb);
   return (hi + 0.05) / (lo + 0.05);
 }
-/** 从候选变量里挑第一个与背景对比度 >=3 的值；都不达标则取第一个有值的。 */
 function pickReadable(cs, names, bg) {
   let first = '';
   for (const n of names) {
@@ -213,9 +260,7 @@ function applyTheme() {
       }
     }
   } catch (_) { /* 独立模式或跨域 */ }
-  const set = (local, v) => {
-    document.documentElement.style.setProperty(local, v || THEME_FALLBACK[local]);
-  };
+  const set = (local, v) => document.documentElement.style.setProperty(local, v || THEME_FALLBACK[local]);
   const bg = dlgBg || (cs ? (cs.getPropertyValue('--dsw-alias-bg-layer-2') || '').trim() : '') || THEME_FALLBACK['--u-bg'];
   set('--u-bg', bg);
   for (const key of ['card', 'card2', 'card3', 'border', 'border2', 'blue', 'green', 'red', 'warn', 'tip']) {
@@ -233,7 +278,7 @@ function applyTheme() {
   set('--u-tip-text', contrast('#111111', tipBg) >= 3 ? '#111111' : '#f9fafb');
 }
 
-/* ---------------- 折线图 ---------------- */
+/* ---------------- 折线/面积图 ---------------- */
 function smoothPath(pts) {
   if (!pts.length) return '';
   if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
@@ -246,12 +291,12 @@ function smoothPath(pts) {
 }
 
 function renderLineChart(container, opts) {
-  const { series, labels, yFmt, H = 300, rowFmt, labelX } = opts;
+  const { series, labels, yFmt, H = 260, rowFmt, labelX, area = false } = opts;
   const lx = labelX || md;
   container.innerHTML = '';
   if (!labels.length || !series.length) return;
   const W = container.clientWidth || 860;
-  const padL = 46, padR = 30, padT = 14, padB = 26;
+  const padL = 52, padR = 20, padT = 14, padB = 26;
   const iw = W - padL - padR, ih = H - padT - padB;
   const maxV = Math.max(1, ...series.flatMap(s => s.values.filter(v => v != null)));
   const X = i => padL + (labels.length === 1 ? iw / 2 : i * (iw / (labels.length - 1)));
@@ -266,18 +311,26 @@ function renderLineChart(container, opts) {
     svg.appendChild(t);
   }
   const step = Math.max(1, Math.ceil(labels.length / 8));
-  labels.forEach((lb, i) => {
-    if (i % step !== 0 && i !== labels.length - 1) return;
+  const labeled = [];
+  labels.forEach((lb, i) => { if (i % step === 0) labeled.push(i); });
+  if (labeled.length && labeled[labeled.length - 1] !== labels.length - 1 && labels.length - 1 - labeled[labeled.length - 1] < Math.ceil(step * 0.6)) labeled.pop();
+  labeled.push(labels.length - 1);
+  [...new Set(labeled)].forEach(i => {
     const t = svgEl('text', { x: X(i), y: H - 7, 'text-anchor': 'middle', class: 'axx' });
-    t.textContent = lx(lb);
+    t.textContent = lx(labels[i]);
     svg.appendChild(t);
   });
 
   for (const s of series) {
     let run = [];
     const flush = () => {
-      if (run.length > 1) svg.appendChild(svgEl('path', { d: smoothPath(run), fill: 'none', stroke: s.color, 'stroke-width': 2.2, 'stroke-linecap': 'round' }));
-      else if (run.length === 1) svg.appendChild(svgEl('circle', { cx: run[0].x, cy: run[0].y, r: 2.4, fill: s.color }));
+      if (run.length > 1) {
+        const d = smoothPath(run);
+        if (area) svg.appendChild(svgEl('path', { d: d + `L${run[run.length - 1].x},${padT + ih}L${run[0].x},${padT + ih}Z`, fill: s.color, opacity: .18, stroke: 'none' }));
+        svg.appendChild(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2.2, 'stroke-linecap': 'round' }));
+      } else if (run.length === 1) {
+        svg.appendChild(svgEl('circle', { cx: run[0].x, cy: run[0].y, r: 2.4, fill: s.color }));
+      }
       run = [];
     };
     s.values.forEach((v, i) => { if (v == null) flush(); else run.push({ x: X(i), y: Y(v) }); });
@@ -314,189 +367,39 @@ function renderLineChart(container, opts) {
   container.appendChild(svg);
 }
 
-/* ---------------- 每日 Token 趋势 ---------------- */
-function renderTrend() {
-  const days = bucketDays();
+/* ---------------- 堆叠柱状图 ---------------- */
+function renderStackedBars(container, opts) {
+  const { days, series, valueOf, fmtVal, H = 280, labelX, title } = opts;
   const isHour = RANGE === 1;
-  const models = modelTotalsOf(days).slice(0, 5);
-  const leg = $('#trendLegend');
-  leg.innerHTML = '';
-  models.forEach((m, i) => {
-    const it = document.createElement('span');
-    it.className = 'legend-item';
-    it.innerHTML = `<span class="dot" style="background:${PALETTE[i % PALETTE.length]}"></span>${m.name}`;
-    leg.appendChild(it);
-  });
-  const labels = days.map(d => d.date);
-  const series = models.map((m, i) => ({
-    name: m.name, color: PALETTE[i % PALETTE.length],
-    values: days.map(d => (d.ofByModel[m.name] && d.ofByModel[m.name].tokens) || 0),
-  }));
-  renderLineChart($('#trendChart'), {
-    series, labels, H: 300, yFmt: fmtTokens,
-    labelX: isHour ? (lb => lb.slice(11, 16)) : undefined,
-    tipSuffix: i => fmtTokens(days[i].ofTokens) + ' tokens',
-  });
-}
-
-/* ---------------- 模型用量环图 ---------------- */
-function arcPath(cx, cy, r, a0, a1) {
-  const large = a1 - a0 > Math.PI ? 1 : 0;
-  const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
-  const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-  return `M${x0},${y0} A${r},${r} 0 ${large} 1 ${x1},${y1}`;
-}
-function renderDonut() {
-  const days = bucketDays();
-  const models = modelTotalsOf(days);
-  const total = models.reduce((s, m) => s + m.tokens, 0);
-  const items = models.slice(0, 6).map((m, i) => ({ name: m.name, value: m.tokens, color: PALETTE[i % PALETTE.length] }));
-  if (models.length > 6) {
-    items.push({ name: '其他', value: models.slice(6).reduce((s, m) => s + m.tokens, 0), color: OTHER_COLOR });
-  }
-  const box = $('#donut');
-  box.innerHTML = '';
-  const SZ = 230, cx = SZ / 2, cy = SZ / 2, r = 78, sw = 30, gap = 0.045;
-  const svg = svgEl('svg', { viewBox: `0 0 ${SZ} ${SZ}`, width: SZ, height: SZ });
-  let a = -Math.PI / 2;
-  if (total <= 0) {
-    svg.appendChild(svgEl('circle', { cx, cy, r, fill: 'none', stroke: 'var(--u-card2)', 'stroke-width': sw }));
-  } else {
-    for (const it of items) {
-      const frac = it.value / total;
-      const a1 = a + frac * Math.PI * 2;
-      const aEnd = items.length === 1 ? a + Math.PI * 2 * 0.9999 : a1 - Math.min(gap, frac * Math.PI * 2 * 0.4);
-      if (aEnd > a) svg.appendChild(svgEl('path', { d: arcPath(cx, cy, r, a, aEnd), fill: 'none', stroke: it.color, 'stroke-width': sw }));
-      a = a1;
-    }
-  }
-  const t1 = svgEl('text', { x: cx, y: cy - 2, 'text-anchor': 'middle', fill: 'var(--u-text)', 'font-size': 21, 'font-weight': 600 });
-  t1.textContent = fmtTokens(total);
-  const t2 = svgEl('text', { x: cx, y: cy + 19, 'text-anchor': 'middle', fill: 'var(--u-muted)', 'font-size': 12 });
-  t2.textContent = 'tokens';
-  svg.appendChild(t1); svg.appendChild(t2);
-  box.appendChild(svg);
-
-  const lg = $('#donutLegend');
-  lg.innerHTML = '';
-  for (const it of items) {
-    const pct = total > 0 ? (it.value / total * 100) : 0;
-    const row = document.createElement('div');
-    row.className = 'mrow';
-    row.innerHTML = `<span class="dot" style="background:${it.color};margin-top:5px"></span>
-      <span class="mname"><span class="n1">${it.name}</span><div class="n2">${fmtTokens(it.value)} tokens</div></span>
-      <span class="pct">${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%</span>`;
-    lg.appendChild(row);
-  }
-}
-
-/* ---------------- 顶部统计（4 项） ---------------- */
-function renderActivity() {
-  const t = DATA.totals;
-  const today = officialDays(DATA.days.length ? [DATA.days[DATA.days.length - 1]] : []);
-  const todayTokens = sumField(today, 'ofTokens');
-  const cur = officialDays(rangeDays()), prev = officialDays(prevDays());
-  const hrC = hitRate(cur), hrP = hitRate(prev);
-  const tiles = [
-    { v: fmtTokens(todayTokens), l: '今日 Token' },
-    { v: fmtTokens(t.tokens), l: '累计 Token 数' },
-    { v: fmtTokens(DATA.peak.tokens), l: `峰值 Token 数 <span class="info" title="峰值出现在 ${DATA.peak.date ? cmd(DATA.peak.date) : '-'}">ⓘ</span>` },
-    { v: hrC == null ? '-' : Math.round(hrC * 100) + '%', d: hrC != null && hrP != null ? `<span class="delta ${hrC >= hrP ? 'up' : 'down'}">${hrC >= hrP ? '+' : ''}${Math.round((hrC - hrP) * 100)}%</span>` : '', l: 'Cache 命中率' },
-  ];
-  const box = $('#activityTiles');
-  box.innerHTML = '';
-  for (const x of tiles) {
-    const d = document.createElement('div');
-    d.className = 'tile';
-    d.innerHTML = `<div class="v">${x.v}${x.d || ''}</div><div class="l">${x.l}</div>`;
-    box.appendChild(d);
-  }
-}
-
-/* ---------------- 消耗堆叠柱（今日按小时，多日按天） ---------------- */
-function renderBars() {
-  const days = bucketDays();
-  const isHour = RANGE === 1;
-  const unitSeg = $('#unitSeg'), priceBtn = $('#priceBtn');
-  let series = [], valueOf, fmtVal, totalLabel;
-  if (barDim === 'model') {
-    unitSeg.classList.remove('disabled');
-    priceBtn.style.display = barUnit === 'cost' ? '' : 'none';
-    const ms = modelTotalsOf(days);
-    series = ms.map((m, i) => ({ key: m.name, color: PALETTE[i % PALETTE.length] }));
-    if (barUnit === 'cost') {
-      valueOf = (d, k) => modelCost(d, k);
-      fmtVal = fmtCost;
-      totalLabel = v => '估算费用总量: <b>' + fmtCost(v) + '</b>';
-    } else {
-      valueOf = (d, k) => (d.ofByModel[k] && d.ofByModel[k].tokens) || 0;
-      fmtVal = v => fmtTokens(v) + ' tokens';
-      totalLabel = v => '消耗总量: <b>' + fmtTokens(v) + ' tokens</b>';
-    }
-  } else {
-    unitSeg.classList.add('disabled');
-    priceBtn.style.display = 'none';
-    const ts = toolTotalsInRange(days).slice(0, 8);
-    series = ts.map((t, i) => ({ key: t.name, color: PALETTE[i % PALETTE.length] }));
-    if (ts.length > 8) {
-      const restNames = ts.slice(8).map(t => t.name);
-      series.push({ key: '其他', color: OTHER_COLOR, rest: restNames });
-    }
-    valueOf = (d, k) => {
-      const s = series.find(x => x.key === k);
-      if (s && s.rest) return s.rest.reduce((acc, n) => acc + (d.byTool[n] || 0), 0);
-      return d.byTool[k] || 0;
-    };
-    fmtVal = v => fmtInt(v) + ' 次';
-    totalLabel = v => '调用总量: <b>' + fmtInt(v) + ' 次</b>';
-  }
-
-  const leg = $('#barLegend');
-  leg.innerHTML = '';
-  const totals = new Map(series.map(s => [s.key, days.reduce((acc, d) => acc + valueOf(d, s.key), 0)]));
-  series
-    .slice()
-    .sort((a, b) => (totals.get(b.key) || 0) - (totals.get(a.key) || 0))
-    .forEach(s => {
-      const it = document.createElement('span');
-      it.className = 'legend-item check' + (hiddenBars.has(s.key) ? ' off' : '');
-      it.innerHTML = `<span class="sq" style="background:${s.color}"></span>${s.key}: ${fmtVal(totals.get(s.key) || 0)}`;
-      it.addEventListener('click', () => {
-        if (hiddenBars.has(s.key)) hiddenBars.delete(s.key); else hiddenBars.add(s.key);
-        renderBars();
-      });
-      leg.appendChild(it);
-    });
-
+  const lx = labelX || md;
+  container.innerHTML = '';
+  if (!days.length || !series.length) return;
+  const W = container.clientWidth || 860, hh = H;
+  const padL = 52, padR = 20, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = hh - padT - padB;
   const visible = series.filter(s => !hiddenBars.has(s.key));
-  $('#barTotal').innerHTML = totalLabel(visible.reduce((s, ser) => s + (totals.get(ser.key) || 0), 0)) +
-    (barUnit === 'cost' && barDim === 'model' && priceTableEmpty() ? ' <span style="color:var(--u-warn)">· 尚未设置单价，请点「单价设置」</span>' : '');
-
-  const box = $('#barChart');
-  box.innerHTML = '';
-  if (!days.length || !visible.length) return;
-  const W = box.clientWidth || 860, H = 300;
-  const padL = 46, padR = 30, padT = 12, padB = 26;
-  const iw = W - padL - padR, ih = H - padT - padB;
-  const dayTotals = days.map(d => visible.reduce((s, ser) => s + valueOf(d, ser.key), 0));
-  const maxV = Math.max(1, ...dayTotals);
+  const totals = days.map(d => visible.reduce((s, ser) => s + valueOf(d, ser.key), 0));
+  const maxV = Math.max(1, ...totals);
   const Y = v => padT + ih - (v / maxV) * ih;
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H });
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${hh}`, height: hh });
   for (let g = 0; g <= 4; g++) {
     const gv = maxV * g / 4, gy = Y(gv);
     svg.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: gy, y2: gy, class: g > 0 ? 'grid' : 'grid0', 'stroke-dasharray': g > 0 ? '3,5' : undefined }));
     const t = svgEl('text', { x: padL - 9, y: gy + 4, 'text-anchor': 'end', class: 'ax' });
-    t.textContent = barDim === 'tool' ? fmtInt(gv) : (barUnit === 'cost' ? fmtCost(gv) : fmtTokens(gv));
+    t.textContent = fmtVal(gv);
     svg.appendChild(t);
   }
   const slot = iw / days.length;
-  const bw = Math.max(4, Math.min(28, isHour ? slot * 0.72 : slot * 0.5));
+  const bw = Math.max(4, Math.min(30, isHour ? slot * 0.72 : slot * 0.5));
   const X = i => padL + slot * i + (slot - bw) / 2;
-  const step = Math.max(1, Math.ceil(days.length / (isHour ? 8 : 7)));
-  days.forEach((d, i) => {
-    if (i % step !== 0 && i !== days.length - 1) return;
-    const t = svgEl('text', { x: X(i) + bw / 2, y: H - 7, 'text-anchor': 'middle', class: 'axx' });
-    t.textContent = isHour ? d.date.slice(11, 16) : md(d.date);
+  const step = Math.max(1, Math.ceil(days.length / 8));
+  const labeled = [];
+  days.forEach((d, i) => { if (i % step === 0) labeled.push(i); });
+  if (labeled.length && labeled[labeled.length - 1] !== days.length - 1 && days.length - 1 - labeled[labeled.length - 1] < Math.ceil(step * 0.6)) labeled.pop();
+  labeled.push(days.length - 1);
+  [...new Set(labeled)].forEach(i => {
+    const t = svgEl('text', { x: X(i) + bw / 2, y: hh - 7, 'text-anchor': 'middle', class: 'axx' });
+    t.textContent = lx(days[i].date);
     svg.appendChild(t);
   });
   days.forEach((d, i) => {
@@ -519,49 +422,146 @@ function renderBars() {
       .map(ser => ({ color: ser.color, name: ser.key, value: fmtVal(valueOf(days[idx], ser.key)), raw: valueOf(days[idx], ser.key) }))
       .filter(r => r.raw > 0)
       .sort((a, b) => b.raw - a.raw);
-    const title = (isHour ? days[idx].date.slice(11, 16) : md(days[idx].date)) + ' · ' + fmtVal(dayTotals[idx]);
-    showTip(tipHTML(title, rows.length ? rows : [{ color: '#8b929a', name: '—', value: '0' }]), ev.clientX, ev.clientY);
+    showTip(tipHTML(`${lx(days[idx].date)} · ${fmtVal(totals[idx])}`, rows.length ? rows : [{ color: '#8b929a', name: '—', value: '0' }]), ev.clientX, ev.clientY);
   });
   overlay.addEventListener('mouseleave', hideTip);
   svg.appendChild(overlay);
-  box.appendChild(svg);
+  if (title) {
+    const t = svgEl('text', { x: padL, y: padT - 2, class: 'ax' });
+    t.textContent = title;
+    svg.insertBefore(t, svg.firstChild);
+  }
+  container.appendChild(svg);
 }
 
-/* ---------------- 系统健康度（今日按小时） ---------------- */
-function renderHealth() {
+/* ---------------- 消费金额图 + 图例 ---------------- */
+function renderCostChart() {
   const days = bucketDays();
   const isHour = RANGE === 1;
-  $('#healthRange').textContent = RANGE === 1 ? '今日' : RANGE === 7 ? '近 7 日' : '近 30 日';
-  const names = modelTotalsOf(days).map(m => m.name)
-    .filter(n => days.some(d => d.ofByModel[n] && d.ofByModel[n].spanTokens > 0))
-    .slice(0, 4);
-  const leg = $('#healthLegend');
+  const models = modelTotalsOf(days);
+  const series = models.map((m, i) => ({ key: m.name, color: PALETTE[i % PALETTE.length] }));
+  const valueOf = (d, k) => k === '__cost__' ? d.cost : modelCost(d, k);
+
+  let seriesFinal, valFn, fmtVal;
+  if (barDim === 'model') {
+    seriesFinal = series;
+    valFn = (d, k) => modelCost(d, k);
+    fmtVal = v => fmtCost(v);
+  } else {
+    seriesFinal = [{ key: '__calls__', color: PALETTE[0] }];
+    valFn = (d, k) => d.reqs || 0;
+    fmtVal = v => fmtInt(v) + ' 次';
+  }
+
+  const leg = $('#costLegend');
   leg.innerHTML = '';
-  names.forEach((n, i) => {
+  seriesFinal.forEach(s => {
+    const total = days.reduce((acc, d) => acc + valFn(d, s.key), 0);
     const it = document.createElement('span');
-    it.className = 'legend-item';
-    it.innerHTML = `<span class="dot" style="background:${PALETTE[i % PALETTE.length]}"></span>${n} 高峰期均 Decode 速度`;
+    it.className = 'legend-item check' + (hiddenBars.has(s.key) ? ' off' : '');
+    it.innerHTML = `<span class="sq" style="background:${s.color}"></span>${s.key === '__calls__' ? '请求次数' : s.key}: ${fmtVal(total)}`;
+    it.addEventListener('click', () => {
+      if (hiddenBars.has(s.key)) hiddenBars.delete(s.key); else hiddenBars.add(s.key);
+      renderCostChart();
+    });
     leg.appendChild(it);
   });
-  const series = names.map((n, i) => ({
-    name: n, color: PALETTE[i % PALETTE.length],
-    values: days.map(d => {
-      const m = d.ofByModel[n];
-      return m && m.spanTokens > 0 && m.spanMs > 0 ? m.spanTokens / m.spanMs * 1000 : null;
-    }),
-  }));
-  renderLineChart($('#healthChart'), {
-    series, labels: days.map(d => d.date), H: 240,
-    yFmt: v => v >= 100 ? String(Math.round(v)) : v.toFixed(1),
-    rowFmt: v => v.toFixed(1) + ' tok/s',
+  const vis = seriesFinal.filter(s => !hiddenBars.has(s.key));
+  const grand = days.reduce((acc, d) => acc + vis.reduce((s, ser) => s + valFn(d, ser.key), 0), 0);
+  $('#costChartTotal').textContent = (isHour ? '今日 ' : RANGE === 7 ? '近 7 天 ' : '近 30 天 ') + fmtVal(grand);
+
+  renderStackedBars($('#costChart'), {
+    days,
+    series: vis,
+    valueOf: valFn,
+    fmtVal,
+    H: 280,
     labelX: isHour ? (lb => lb.slice(11, 16)) : undefined,
   });
+}
+
+/* ---------------- 每模型分区（请求次数面积图 + Tokens 柱状图） ---------------- */
+function renderModelSections() {
+  const days = bucketDays();
+  const isHour = RANGE === 1;
+  const models = modelTotalsOf(days).filter(m => m.tokens > 0 || m.reqs > 0);
+  const box = $('#modelSections');
+  box.innerHTML = '';
+  if (!models.length) return;
+  const labels = days.map(d => d.date);
+  const labelX = isHour ? (lb => lb.slice(11, 16)) : undefined;
+
+  for (const m of models) {
+    const sec = document.createElement('div');
+    sec.className = 'model-section';
+    const h = document.createElement('h3');
+    h.textContent = m.name;
+    sec.appendChild(h);
+
+    const grid = document.createElement('div');
+    grid.className = 'two-charts';
+
+    const reqCard = document.createElement('div');
+    reqCard.className = 'chart-card';
+    const reqTitle = document.createElement('div');
+    reqTitle.className = 'chtitle';
+    reqTitle.innerHTML = `API 请求次数 <b>${fmtInt(m.reqs)}</b>`;
+    reqCard.appendChild(reqTitle);
+    const reqChart = document.createElement('div');
+    reqChart.className = 'chart';
+    reqCard.appendChild(reqChart);
+    grid.appendChild(reqCard);
+
+    const tokCard = document.createElement('div');
+    tokCard.className = 'chart-card';
+    const tokTitle = document.createElement('div');
+    tokTitle.className = 'chtitle';
+    tokTitle.innerHTML = `Tokens <b>${fmtTokens(m.tokens)}</b>`;
+    tokCard.appendChild(tokTitle);
+    const tokChart = document.createElement('div');
+    tokChart.className = 'chart';
+    tokCard.appendChild(tokChart);
+    grid.appendChild(tokCard);
+
+    sec.appendChild(grid);
+    box.appendChild(sec);
+
+    renderLineChart(reqChart, {
+      series: [{ name: m.name, color: PALETTE[0], values: days.map(d => (d.ofByModel[m.name] && d.ofByModel[m.name].reqs) || 0) }],
+      labels, H: 220, yFmt: v => fmtInt(v), rowFmt: v => fmtInt(v) + ' 次',
+      labelX, area: true,
+    });
+    renderStackedBars(tokChart, {
+      days,
+      series: [{ key: m.name, color: PALETTE[0] }],
+      valueOf: (d, k) => (d.ofByModel[k] && d.ofByModel[k].tokens) || 0,
+      fmtVal: v => fmtTokens(v),
+      H: 220,
+      labelX,
+    });
+  }
+}
+
+/* ---------------- 顶部卡与统计 ---------------- */
+function renderTopCards() {
+  const allDays = officialDays(DATA.days);
+  const totalCost = allDays.reduce((s, d) => s + dayCost(d), 0);
+  $('#totalCostVal').textContent = fmtMoney(totalCost, 'CNY');
+}
+function renderStats() {
+  const days = bucketDays();
+  const cost = days.reduce((s, d) => s + dayCost(d), 0);
+  const reqs = sumField(days, 'reqs') || sumField(days, 'reqTotal');
+  const tokens = sumField(days, 'ofTokens');
+  $('#statCost').textContent = fmtMoney(cost, 'CNY');
+  $('#statReqs').textContent = fmtInt(reqs);
+  $('#statTokens').textContent = fmtInt(tokens);
 }
 
 /* ---------------- 余额 ---------------- */
 function storedApiKey() { try { return localStorage.getItem('dshUsageApiKey') || ''; } catch (_) { return ''; } }
 async function loadBalance() {
-  const dot = $('#balDot'), val = $('#balVal'), sub = $('#balSub');
+  const val = $('#balVal'), sub = $('#balSub');
   let b;
   try {
     const key = storedApiKey();
@@ -569,25 +569,23 @@ async function loadBalance() {
   } catch (err) { b = { ok: false, error: '网络错误' }; }
   if (b.ok && b.balances && b.balances.length) {
     const info = b.balances[0];
-    const num = parseFloat(info.total);
-    dot.className = 'dot ' + (b.isAvailable ? 'ok' : 'bad');
-    val.className = 'bal-val';
-    val.textContent = fmtMoney(num, info.currency);
-    sub.className = 'bal-sub';
+    val.textContent = fmtMoney(parseFloat(info.total), info.currency);
+    val.className = 'tv';
     sub.textContent = b.isAvailable ? '账户可用 · ' + info.currency : '账户不可用';
+    sub.className = 'tsub' + (b.isAvailable ? '' : ' bad');
   } else {
-    dot.className = 'dot bad';
-    val.className = 'bal-val err';
-    val.textContent = b.needsKey ? '未配置 API Key' : '余额查询失败';
-    sub.className = 'bal-sub bad';
+    val.textContent = b.needsKey ? '未配置 Key' : '查询失败';
+    val.className = 'tv err';
     sub.textContent = b.error || '';
+    sub.className = 'tsub bad';
   }
 }
 const keyDlg = $('#keyDlg');
-$('#balKeyBtn').addEventListener('click', () => {
+$('#keyLink').addEventListener('click', e => { e.preventDefault(); openKeyDlg(); });
+function openKeyDlg() {
   $('#keyInput').value = storedApiKey();
   keyDlg.showModal();
-});
+}
 $('#keyCancel').addEventListener('click', () => keyDlg.close());
 $('#keyClear').addEventListener('click', () => { $('#keyInput').value = ''; });
 $('#keySave').addEventListener('click', () => {
@@ -596,7 +594,34 @@ $('#keySave').addEventListener('click', () => {
   loadBalance();
 });
 
-/* ---------------- 高度自适应（消除 iframe 内滚动条） ---------------- */
+/* ---------------- 导出 CSV ---------------- */
+$('#exportBtn').addEventListener('click', () => {
+  const days = bucketDays();
+  const rows = [['时间', '模型', '请求次数', '输入 tokens', '缓存命中 tokens', '输出 tokens', 'Tokens', '费用(¥估算)']];
+  for (const d of days) {
+    const t = isHour() ? d.date.slice(11, 16) : d.date;
+    const models = Object.keys(d.ofByModel);
+    if (!models.length) rows.push([t, '-', '', '', '', '', fmtTokens(d.ofTokens), dayCost(d).toFixed(4)]);
+    for (const m of models) {
+      const v = d.ofByModel[m];
+      rows.push([t, m, v.reqs || 0, v.input || 0, v.cacheRead || 0, v.output || 0, v.tokens || 0, modelCostOf(d, m).toFixed(4)]);
+    }
+  }
+  const csv = '\ufeff' + rows.map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `dsh-usage-${todayKeyStr()}${RANGE === 1 ? '-hourly' : ''}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+function isHour() { return RANGE === 1; }
+function modelCostOf(day, model) {
+  const v = day.ofByModel[model];
+  if (!v) return 0;
+  return bucketCost({ date: day.date, ofByModel: { [model]: v } });
+}
+
+/* ---------------- 高度自适应 ---------------- */
 function postHeight() {
   if (parent === window) return;
   try {
@@ -606,7 +631,7 @@ function postHeight() {
 
 /* ---------------- 单价设置 ---------------- */
 const priceDlg = $('#priceDlg');
-function openPriceDlg() {
+$('#priceBtn').addEventListener('click', () => {
   const days = bucketDays();
   const names = new Set(modelTotalsOf(days).map(m => m.name));
   const saved = priceTable();
@@ -618,14 +643,13 @@ function openPriceDlg() {
     const row = document.createElement('div');
     row.className = 'prow';
     row.innerHTML = `<span class="mnm" title="${n}">${n}</span>
-      <input data-m="${n}" data-f="input" type="number" step="any" min="0" value="${p.input ?? ''}" placeholder="0">
-      <input data-m="${n}" data-f="cacheRead" type="number" step="any" min="0" value="${p.cacheRead ?? ''}" placeholder="0">
-      <input data-m="${n}" data-f="output" type="number" step="any" min="0" value="${p.output ?? ''}" placeholder="0">`;
+      <input data-m="${n}" data-f="input" type="number" step="any" min="0" value="${p.input ?? ''}" placeholder="官方分时价">
+      <input data-m="${n}" data-f="cacheRead" type="number" step="any" min="0" value="${p.cacheRead ?? ''}" placeholder="官方分时价">
+      <input data-m="${n}" data-f="output" type="number" step="any" min="0" value="${p.output ?? ''}" placeholder="官方分时价">`;
     rows.appendChild(row);
   }
   priceDlg.showModal();
-}
-$('#priceBtn').addEventListener('click', openPriceDlg);
+});
 $('#priceCancel').addEventListener('click', () => priceDlg.close());
 $('#priceSave').addEventListener('click', () => {
   const table = {};
@@ -645,22 +669,44 @@ function renderAll() {
   const empty = !DATA.days.length;
   $('#emptyBanner').style.display = empty ? '' : 'none';
   if (empty) { postHeight(); return; }
-  renderActivity();
-  renderTrend();
-  renderDonut();
-  applyChartTab();
-  renderBars();
+  renderTopCards();
+  renderStats();
+  renderCostChart();
+  renderModelSections();
   renderHealth();
   const t = new Date(DATA.generatedAt);
   $('#foot').textContent = `数据源 ${DATA.sessionsDir} · ${DATA.sessionCount} 个会话 · 更新于 ${t.toLocaleTimeString('zh-CN', { hour12: false })}`;
   requestAnimationFrame(postHeight);
 }
 
-function applyChartTab() {
-  const trend = chartTab === 'trend';
-  $('#trendPane').style.display = trend ? '' : 'none';
-  $('#donutPane').style.display = trend ? 'none' : '';
-  for (const b of $('#chartTabSeg').children) b.classList.toggle('on', b.dataset.tab === chartTab);
+function renderHealth() {
+  const days = bucketDays();
+  const isHour = RANGE === 1;
+  $('#healthRange').textContent = RANGE === 1 ? '今天' : RANGE === 7 ? '近 7 天' : '近 30 天';
+  const names = modelTotalsOf(days).map(m => m.name)
+    .filter(n => days.some(d => d.ofByModel[n] && d.ofByModel[n].spanTokens > 0))
+    .slice(0, 4);
+  const leg = $('#healthLegend');
+  leg.innerHTML = '';
+  names.forEach((n, i) => {
+    const it = document.createElement('span');
+    it.className = 'legend-item';
+    it.innerHTML = `<span class="dot" style="background:${PALETTE[i % PALETTE.length]}"></span>${n}`;
+    leg.appendChild(it);
+  });
+  const series = names.map((n, i) => ({
+    name: n, color: PALETTE[i % PALETTE.length],
+    values: days.map(d => {
+      const m = d.ofByModel[n];
+      return m && m.spanTokens > 0 && m.spanMs > 0 ? m.spanTokens / m.spanMs * 1000 : null;
+    }),
+  }));
+  renderLineChart($('#healthChart'), {
+    series, labels: days.map(d => d.date), H: 240,
+    yFmt: v => v >= 100 ? String(Math.round(v)) : v.toFixed(1),
+    rowFmt: v => v.toFixed(1) + ' tok/s',
+    labelX: isHour ? (lb => lb.slice(11, 16)) : undefined,
+  });
 }
 
 async function load() {
@@ -684,28 +730,13 @@ $('#rangeSeg').addEventListener('click', ev => {
   for (const x of $('#rangeSeg').children) x.classList.toggle('on', x === b);
   renderAll();
 });
-$('#chartTabSeg').addEventListener('click', ev => {
-  const b = ev.target.closest('button');
-  if (!b) return;
-  chartTab = b.dataset.tab;
-  applyChartTab();
-  postHeight();
-});
-$('#unitSeg').addEventListener('click', ev => {
-  const b = ev.target.closest('button');
-  if (!b) return;
-  barUnit = b.dataset.unit;
-  for (const x of $('#unitSeg').children) x.classList.toggle('on', x === b);
-  if (barUnit === 'cost' && barDim === 'model' && priceTableEmpty()) openPriceDlg();
-  renderBars();
-});
 $('#dimSeg').addEventListener('click', ev => {
   const b = ev.target.closest('button');
   if (!b) return;
   barDim = b.dataset.dim;
   for (const x of $('#dimSeg').children) x.classList.toggle('on', x === b);
   hiddenBars.clear();
-  renderBars();
+  renderCostChart();
 });
 $('#refreshBtn').addEventListener('click', () => { load(); loadBalance(); });
 
@@ -715,12 +746,8 @@ window.addEventListener('resize', () => {
   rsTimer = setTimeout(() => { renderAll(); postHeight(); }, 200);
 });
 
-/* 主题同步：800ms 轮询宿主变量（Appearance 切换即时生效） */
 applyTheme();
 setInterval(applyTheme, 800);
-
-/* 余额 60s 自动刷新 */
 loadBalance();
 setInterval(loadBalance, 60000);
-
 load();
