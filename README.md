@@ -94,6 +94,10 @@ public/               dashboard front-end (vanilla HTML/CSS/JS, hand-rolled SVG 
 server.js, start.cmd  standalone mode on port 7900
 ```
 
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development loop, reload semantics and debugging tips. Maintainers on Windows can use `update.cmd "commit message"` for a one-click commit → push → reinstall.
+
 ## License
 
 [MIT](LICENSE)

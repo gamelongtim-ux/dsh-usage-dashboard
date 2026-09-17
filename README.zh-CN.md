@@ -97,3 +97,7 @@ server.js, start.cmd  独立模式（7900 端口）
 ## License
 
 [MIT](LICENSE)
+
+## 开发与更新
+
+开发流程、热更新语义与调试技巧见 [CONTRIBUTING.md](CONTRIBUTING.md)。Windows 维护者可用 `update.cmd "提交说明"` 一键完成 提交→推送→重装进 dsh。
