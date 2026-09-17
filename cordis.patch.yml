@@ -1,0 +1,7 @@
+# dsh-usage-dashboard bundle patch：在 Web 层之上插入仪表盘路由。
+# 行配置可被后续 patch 层（profile cordis.patch.yml / --patch 覆盖）按 id 改写。
+- insert:
+    - id: usage-dashboard
+      name: dsh-usage-dashboard
+      config:
+        path: /usage-dashboard

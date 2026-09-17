@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh 用量总览 · DeepSeek Harness</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">dsh 用量总览 <span class="sub">DeepSeek Harness</span></div>
+    <div class="topbar-right">
+      <span class="lbl">时间范围</span>
+      <div class="seg" id="rangeSeg">
+        <button data-range="7" class="on">近 7 日</button>
+        <button data-range="30">近 30 日</button>
+      </div>
+      <button class="btn" id="refreshBtn">⟳ 刷新</button>
+    </div>
+  </div>
+
+  <div id="emptyBanner" class="card empty" style="display:none">未找到 dsh 会话记录</div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">每日 Token 趋势图</div>
+      <div class="legend" id="trendLegend"></div>
+    </div>
+    <div id="trendChart" class="chart"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="card-title">模型用量</div></div>
+    <div class="donut-wrap">
+      <div id="donut" class="donut"></div>
+      <div id="donutLegend" class="mrows"></div>
+    </div>
+  </div>
+
+  <div class="sec">活跃度</div>
+  <div class="card">
+    <div class="tiles" id="activityTiles"></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Token 活动</div>
+      <div class="seg" id="heatSeg">
+        <button data-mode="daily" class="on">每日</button>
+        <button data-mode="weekly">每周</button>
+        <button data-mode="cumulative">累计</button>
+      </div>
+    </div>
+    <div id="heatmap"></div>
+  </div>
+
+  <div class="sec">用量趋势</div>
+  <div class="card">
+    <div class="tiles three" id="usageTiles"></div>
+  </div>
+  <div class="card">
+    <div class="card-head">
+      <div class="toggles">
+        <div class="seg" id="unitSeg">
+          <button data-unit="tokens" class="on">Token 消耗</button>
+          <button data-unit="cost">费用估算</button>
+        </div>
+        <div class="seg" id="dimSeg">
+          <button data-dim="model" class="on">模型</button>
+          <button data-dim="tool">工具</button>
+        </div>
+      </div>
+      <button class="btn small" id="priceBtn" style="display:none">单价设置</button>
+    </div>
+    <div class="legend" id="barLegend" style="margin-bottom:8px"></div>
+    <div class="bar-total" id="barTotal"></div>
+    <div id="barChart" class="chart"></div>
+  </div>
+
+  <div class="sec">系统健康度</div>
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">系统健康度</div>
+      <div class="lbl" id="healthRange">近 7 日</div>
+    </div>
+    <div class="legend" id="healthLegend" style="margin-bottom:6px"></div>
+    <div id="healthChart" class="chart"></div>
+    <div class="note">各模型高峰期均 Decode 速度（tokens/s，按当日流式输出加权平均）</div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+  <!-- 独立模式与插件模式（/usage-dashboard/）共用此页，API 用相对路径 -->
+</div>
+
+<div class="tip" id="tip" style="display:none"></div>
+
+<dialog id="priceDlg">
+  <div class="dlg-title">费用估算单价 <span class="sub">（¥ / 百万 tokens，仅保存在本浏览器）</span></div>
+  <div id="priceRows"></div>
+  <div class="dlg-foot">
+    <button class="btn" id="priceCancel">取消</button>
+    <button class="btn primary" id="priceSave">保存</button>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

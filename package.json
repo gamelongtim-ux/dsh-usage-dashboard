@@ -1,0 +1,41 @@
+{
+  "name": "dsh-usage-dashboard",
+  "version": "1.0.0",
+  "description": "Usage dashboard plugin for the DeepSeek Harness (dsh) web UI: activity heatmap, token trends, per-model donut, cache-hit and decode-speed health, mounted on dsh's own web server at /usage-dashboard",
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "deepseek-harness",
+    "usage-dashboard",
+    "cordis",
+    "plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-name>/dsh-usage-dashboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<your-name>/dsh-usage-dashboard/issues"
+  },
+  "type": "module",
+  "main": "./lib/plugin.js",
+  "exports": {
+    ".": "./lib/plugin.js",
+    "./plugin": "./lib/plugin.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  }
+}
