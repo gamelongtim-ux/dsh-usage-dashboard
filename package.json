@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-dashboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Usage dashboard plugin for the DeepSeek Harness (dsh) web UI: activity heatmap, token trends, per-model donut, cache-hit and decode-speed health, mounted on dsh's own web server at /usage-dashboard",
   "license": "MIT",
   "keywords": [

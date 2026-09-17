@@ -37,6 +37,14 @@ There is **no build step** — everything runs from source.
 
 3. Restart `dsh web` — bundles and their client modules load at boot.
 
+> **pnpm quirk:** for an already-installed `file:` dependency, re-running `dsh plugin ... add` may silently skip re-copying unchanged content (same name+version). Either bump `version` in package.json before re-adding, or copy the sources straight over the installed directory:
+>
+> ```bash
+> D=~/.dsh/profiles/web/node_modules/dsh-usage-dashboard
+> S=/path/to/dsh-usage-dashboard
+> cp -a "$S/lib" "$S/public" "$S/package.json" "$S/cordis.patch.yml" "$D/"
+> ```
+
 Reload semantics:
 
 | What you changed | What to do |

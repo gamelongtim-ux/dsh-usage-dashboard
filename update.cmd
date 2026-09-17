@@ -2,7 +2,7 @@
 rem ============================================================
 rem  dsh-usage-dashboard maintainer one-click update
 rem  usage: update.cmd ["commit message"]
-rem  Does: git commit+push -> reinstall into dsh web profile.
+rem  git commit+push -> copy sources into the installed dsh profile.
 rem  NOTE: lib/ changes need a `dsh web` restart afterwards;
 rem        public/-only changes just need Ctrl+F5 in the browser.
 rem ============================================================
@@ -26,8 +26,8 @@ if errorlevel 1 (
   git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 push
 )
 
-echo Reinstalling into dsh web profile ...
-wsl.exe -e /bin/bash -lic "dsh plugin --profile web add file:/mnt/c/Users/GGBOND/.zcode/workspace/default/dsh-usage-dashboard 2>&1 | tail -1"
+echo Copying sources into the installed dsh profile ...
+wsl.exe -e /bin/bash -lic "D=/home/ggbond/.dsh/profiles/web/node_modules/dsh-usage-dashboard; S=/mnt/c/Users/GGBOND/.zcode/workspace/default/dsh-usage-dashboard; mkdir -p $D; cp -a $S/lib $S/public $S/package.json $S/cordis.patch.yml $S/README.md $S/README.zh-CN.md $S/LICENSE $S/docs $D/ && echo copied"
 
 echo.
 echo Done. Restart `dsh web` if you changed lib/; Ctrl+F5 is enough for public/-only edits.

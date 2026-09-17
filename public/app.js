@@ -150,16 +150,25 @@ function isPeakLocal(dateLike) {
   const day = d.getDay(), h = d.getHours();
   return day >= 1 && day <= 5 && ((h >= 9 && h < 12) || (h >= 14 && h < 18));
 }
-/** 单桶费用估算：优先用户自定义单价（平价），否则官方分时价。 */
+/** 模型分时单价：用户自定义（字段级回落）否则内置官方价。 */
+function modelPrices(m) {
+  const base = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+  const custom = priceTable()[m] || {};
+  const pick = (k, fb) => {
+    const v = parseFloat(custom[k]);
+    return isFinite(v) && v > 0 ? v : (isFinite(parseFloat(custom[fb])) && parseFloat(custom[fb]) > 0 ? parseFloat(custom[fb]) : base[k]);
+  };
+  return {
+    hitP: pick('hitP', 'input'), missP: pick('missP', 'input'),
+    hitO: pick('hitO', 'cacheRead'), missO: pick('missO', 'input'),
+    outP: pick('outP', 'output'), outO: pick('outO', 'output'),
+  };
+}
+/** 单桶费用估算：官方分时价（可被「单价设置」按字段覆盖）。 */
 function bucketCost(day) {
   let cost = 0;
   for (const [m, v] of Object.entries(day.ofByModel || {})) {
-    const custom = priceTable()[m];
-    if (custom) {
-      cost += ((v.input || 0) * (custom.input || 0) + (v.cacheRead || 0) * (custom.cacheRead || 0) + (v.output || 0) * (custom.output || 0)) / 1e6;
-      continue;
-    }
-    const dp = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+    const dp = modelPrices(m);
     const peak = isPeakLocal(day.date);
     const miss = peak ? dp.missP : dp.missO;
     const hit = peak ? dp.hitP : dp.hitO;
@@ -182,12 +191,7 @@ function dayCost(day) {
   const f = weekday ? 7 / 24 : 0; // 高峰小时占比
   let cost = 0;
   for (const [m, v] of Object.entries(day.ofByModel || {})) {
-    const custom = priceTable()[m];
-    if (custom) {
-      cost += ((v.input || 0) * (custom.input || 0) + (v.cacheRead || 0) * (custom.cacheRead || 0) + (v.output || 0) * (custom.output || 0)) / 1e6;
-      continue;
-    }
-    const dp = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+    const dp = modelPrices(m);
     const miss = f * dp.missP + (1 - f) * dp.missO;
     const hit = f * dp.hitP + (1 - f) * dp.hitO;
     const out = f * dp.outP + (1 - f) * dp.outO;
@@ -585,6 +589,7 @@ $('#keyLink').addEventListener('click', e => { e.preventDefault(); openKeyDlg();
 function openKeyDlg() {
   $('#keyInput').value = storedApiKey();
   keyDlg.showModal();
+  attachDialogCenter(keyDlg);
 }
 $('#keyCancel').addEventListener('click', () => keyDlg.close());
 $('#keyClear').addEventListener('click', () => { $('#keyInput').value = ''; });
@@ -622,6 +627,48 @@ function modelCostOf(day, model) {
 }
 
 /* ---------------- 高度自适应 ---------------- */
+/* ---------------- 弹窗定位（嵌入模式：跟随宿主可视区域居中） ---------------- */
+function visibleCenterInDoc() {
+  if (parent === window) return null;
+  try {
+    const pd = parent.document;
+    const frame = pd.querySelector('iframe[title="Usage dashboard"]');
+    if (!frame) return null;
+    let scroller = pd.scrollingElement || pd.documentElement;
+    let iframeTop = 0, el = frame;
+    while (el && el !== pd.body) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) { scroller = el; break; }
+      iframeTop += el.offsetTop || 0;
+      el = el.parentElement;
+    }
+    return { scroller, iframeTop, top: Math.max(0, scroller.scrollTop - iframeTop), h: scroller.clientHeight };
+  } catch (_) { return null; }
+}
+/** 打开弹窗后调用：把 <dialog> 放到宿主可视区域中央，并随宿主滚动跟随。 */
+function attachDialogCenter(dlg) {
+  const v = visibleCenterInDoc();
+  if (!v) return;
+  const place = () => {
+    const h = dlg.offsetHeight || 320;
+    const center = v.top + v.h / 2;
+    dlg.style.position = 'absolute';
+    dlg.style.margin = '0';
+    dlg.style.left = '50%';
+    dlg.style.transform = 'translateX(-50%)';
+    dlg.style.top = Math.max(8, center - h / 2) + 'px';
+    dlg.style.maxHeight = Math.max(240, v.h - 24) + 'px';
+    dlg.style.overflowY = 'auto';
+  };
+  place();
+  v.scroller.addEventListener('scroll', place);
+  window.addEventListener('resize', place);
+  dlg.addEventListener('close', () => {
+    v.scroller.removeEventListener('scroll', place);
+    window.removeEventListener('resize', place);
+  }, { once: true });
+}
+
 function postHeight() {
   if (parent === window) return;
   try {
@@ -637,18 +684,22 @@ $('#priceBtn').addEventListener('click', () => {
   const saved = priceTable();
   for (const k in saved) names.add(k);
   const rows = $('#priceRows');
-  rows.innerHTML = '<div class="prow head"><span>模型</span><span>输入 ¥/M</span><span>缓存命中 ¥/M</span><span>输出 ¥/M</span></div>';
+  rows.innerHTML = '<div class="prow head"><span>模型 / 时段</span><span>输入 ¥/M</span><span>缓存命中 ¥/M</span><span>输出 ¥/M</span></div>';
   for (const n of names) {
-    const p = saved[n] || {};
-    const row = document.createElement('div');
-    row.className = 'prow';
-    row.innerHTML = `<span class="mnm" title="${n}">${n}</span>
-      <input data-m="${n}" data-f="input" type="number" step="any" min="0" value="${p.input ?? ''}" placeholder="官方分时价">
-      <input data-m="${n}" data-f="cacheRead" type="number" step="any" min="0" value="${p.cacheRead ?? ''}" placeholder="官方分时价">
-      <input data-m="${n}" data-f="output" type="number" step="any" min="0" value="${p.output ?? ''}" placeholder="官方分时价">`;
-    rows.appendChild(row);
+    const dp = modelPrices(n);
+    const cur = saved[n] || {};
+    for (const [suffix, tag, vals] of [['高峰', 'P', dp], ['空闲', 'O', dp]]) {
+      const row = document.createElement('div');
+      row.className = 'prow';
+      row.innerHTML = `<span class="mnm" title="${n}">${n} · ${suffix}</span>
+        <input data-m="${n}" data-t="${tag}" data-f="miss${tag}" type="number" step="any" min="0" value="${cur['miss' + tag] ?? vals['miss' + tag]}">
+        <input data-m="${n}" data-t="${tag}" data-f="hit${tag}" type="number" step="any" min="0" value="${cur['hit' + tag] ?? vals['hit' + tag]}">
+        <input data-m="${n}" data-t="${tag}" data-f="out${tag}" type="number" step="any" min="0" value="${cur['out' + tag] ?? vals['out' + tag]}">`;
+      rows.appendChild(row);
+    }
   }
   priceDlg.showModal();
+  attachDialogCenter(priceDlg);
 });
 $('#priceCancel').addEventListener('click', () => priceDlg.close());
 $('#priceSave').addEventListener('click', () => {
