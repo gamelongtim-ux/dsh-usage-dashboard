@@ -15,9 +15,7 @@ const PALETTE = ['#4C8DFF', '#3ECF8E', '#A78BFA', '#F87171', '#FB923C', '#22D3EE
 const OTHER_COLOR = '#8b929a';
 const HEAT_COLORS = ['#1b3a66', '#2563b8', '#3b82f6', '#7fb3f8'];
 
-/* 只统计 DeepSeek 官方模型（deepseek-flash / deepseek-v4-pro / deepseek-v4-flash* /
-   deepseek-v4.1-flash* 及其限时变体；第三方渠道转发的官方模型同样计入） */
-const OFFICIAL_RE = /^deepseek-/i;
+/* 只统计 DeepSeek 官方模型（normalizeModel 归一化到官方 4 个显示名，其余第三方模型不计入） */
 
 let DATA = null;
 let RANGE = 7;
@@ -73,14 +71,28 @@ function tipHTML(title, rows) {
 function rangeDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - RANGE)); }
 function prevDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - 2 * RANGE), Math.max(0, n - RANGE)); }
 
-/* 官方模型过滤视图：tokens/命中率等口径只计 deepseek-* 模型；工具统计保持全量 */
+/* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名，
+   非 deepseek 官方模型返回 null（不参与统计）。 */
+function normalizeModel(name) {
+  const m = String(name || '').toLowerCase();
+  if (!m.startsWith('deepseek-')) return null;
+  if (m === 'deepseek-flash' || m.includes('v4.1-flash')) return 'DeepSeek-V4.1-Flash';
+  if (m.includes('vision')) return 'DeepSeek-V4-Flash-Vision-Exp';
+  if (m.includes('v4-pro') || m.includes('pro')) return 'DeepSeek-V4-Pro';
+  if (m.includes('v4-flash') || m === 'deepseek-v4') return 'DeepSeek-V4-Flash';
+  // 官方文档：未识别的遗留 id 由 DeepSeek-V4.1-Flash 服务
+  return 'DeepSeek-V4.1-Flash';
+}
+/* 官方模型过滤视图：tokens/命中率等口径只计官方模型（归一化后）；工具统计保持全量 */
 function officialDays(days) {
   return days.map(d => {
     const bm = {};
     let tokens = 0, input = 0, cacheRead = 0;
     for (const [m, v] of Object.entries(d.byModel || {})) {
-      if (!OFFICIAL_RE.test(m)) continue;
-      bm[m] = v;
+      const n = normalizeModel(m);
+      if (!n) continue;
+      const t = bm[n] || (bm[n] = { tokens: 0, input: 0, output: 0, cacheRead: 0, spanMs: 0, spanTokens: 0 });
+      for (const k of ['tokens', 'input', 'output', 'cacheRead', 'spanMs', 'spanTokens']) t[k] += v[k] || 0;
       tokens += v.tokens || 0;
       input += v.input || 0;
       cacheRead += v.cacheRead || 0;
@@ -118,29 +130,65 @@ function priceTableEmpty() {
   return !Object.values(t).some(p => (p.input || 0) + (p.cacheRead || 0) + (p.output || 0) > 0);
 }
 
-/* ---------------- 主题桥：同步 dsh 宿主变量 ---------------- */
-const THEME_MAP = {
-  '--u-bg': ['--dsw-specific-sidebar-fill', '#1b1b1c'],
-  '--u-card': ['--dsw-alias-bg-layer-1', '#232324'],
-  '--u-card2': ['--dsw-alias-bg-layer-2', '#2c2c2e'],
-  '--u-card3': ['--dsw-alias-bg-layer-3', '#353638'],
-  '--u-border': ['--dsw-alias-border-l1', '#ffffff0f'],
-  '--u-border2': ['--dsw-alias-border-l2', '#ffffff1f'],
-  '--u-text': ['--dsw-alias-label-primary', '#f9fafb'],
-  '--u-text2': ['--dsw-alias-label-secondary', '#cfd3d6'],
-  '--u-muted': ['--dsw-alias-label-caption', '#81858c'],
-  '--u-muted2': ['--dsw-alias-label-dimmed', '#61666b'],
-  '--u-blue': ['--dsw-alias-button-info-fill', '#679efe'],
-  '--u-green': ['--dsw-alias-state-success-primary', '#22c55e'],
-  '--u-red': ['--dsw-alias-state-error-primary', '#f25a5a'],
-  '--u-warn': ['--dsw-alias-state-warn-primary', '#f59e0b'],
-  '--u-tip': ['--dsw-alias-tooltip-bg', '#43454a'],
+/* ---------------- 主题桥：同步 dsh 宿主变量 ----------------
+   取值优先级：宿主变量（带对比度校验）→ 宿主弹窗实际背景色 → 暗色兜底。 */
+const THEME_VARS = {
+  bg: ['--dsw-specific-sidebar-fill', '--dsw-alias-bg-layer-2'],
+  card: ['--dsw-alias-bg-layer-3'],
+  card2: ['--dsw-alias-bg-layer-2'],
+  card3: ['--dsw-alias-bg-layer-1'],
+  border: ['--dsw-alias-border-l1'],
+  border2: ['--dsw-alias-border-l2'],
+  text: ['--dsw-alias-label-primary'],
+  text2: ['--dsw-alias-label-secondary'],
+  muted: ['--dsw-alias-label-caption', '--dsw-alias-label-tertiary', '--dsw-alias-label-secondary'],
+  muted2: ['--dsw-alias-label-tertiary', '--dsw-alias-label-caption', '--dsw-alias-label-secondary'],
+  blue: ['--dsw-alias-button-info-fill'],
+  green: ['--dsw-alias-state-success-primary'],
+  red: ['--dsw-alias-state-error-primary'],
+  warn: ['--dsw-alias-state-warn-primary'],
+  tip: ['--dsw-alias-tooltip-bg'],
 };
+const THEME_FALLBACK = {
+  '--u-bg': '#2c2c2e', '--u-card': '#353638', '--u-card2': '#2c2c2e', '--u-card3': '#232324',
+  '--u-border': '#ffffff0f', '--u-border2': '#ffffff1f',
+  '--u-text': '#f9fafb', '--u-text2': '#cfd3d6', '--u-muted': '#81858c', '--u-muted2': '#adb2b8',
+  '--u-blue': '#679efe', '--u-green': '#22c55e', '--u-red': '#f25a5a', '--u-warn': '#f59e0b',
+  '--u-tip': '#43454a', '--u-tip-text': '#f9fafb',
+};
+function hexLum(v) {
+  const m = /#([0-9a-f]{3,8})/i.exec(v || '');
+  if (!m) return null;
+  let c = m[1];
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  c = c.slice(0, 6);
+  const f = x => { const t = parseInt(x, 16) / 255; return t <= 0.03928 ? t / 12.92 : Math.pow((t + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(c.slice(0, 2)) + 0.7152 * f(c.slice(2, 4)) + 0.0722 * f(c.slice(4, 6));
+}
+function contrast(a, b) {
+  const la = hexLum(a), lb = hexLum(b);
+  if (la == null || lb == null) return 99;
+  const hi = Math.max(la, lb), lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+/** 从候选变量里挑第一个与背景对比度 >=3 的值；都不达标则取第一个有值的。 */
+function pickReadable(cs, names, bg) {
+  let first = '';
+  for (const n of names) {
+    const v = (cs.getPropertyValue(n) || '').trim();
+    if (!v) continue;
+    if (!first) first = v;
+    if (contrast(v, bg) >= 3) return v;
+  }
+  return first;
+}
 function applyTheme() {
-  let cs = null;
+  let cs = null, dlgBg = '';
   try {
     if (parent && parent !== window) {
       const pd = parent.document;
+      const dlg = pd.querySelector('[role="dialog"], dialog');
+      if (dlg) dlgBg = getComputedStyle(dlg).backgroundColor.trim();
       const cands = [pd.body, pd.documentElement, ...pd.querySelectorAll('[class]')].slice(0, 300);
       for (const el of cands) {
         if (!el) continue;
@@ -148,11 +196,27 @@ function applyTheme() {
       }
     }
   } catch (_) { /* 独立模式或跨域 */ }
-  for (const [local, [host, fallback]] of Object.entries(THEME_MAP)) {
-    let v = cs ? cs.getPropertyValue(host).trim() : '';
-    if (!v) v = fallback;
-    document.documentElement.style.setProperty(local, v);
+  const set = (local, v) => {
+    if (v) document.documentElement.style.setProperty(local, v);
+    else document.documentElement.style.setProperty(local, THEME_FALLBACK[local]);
+  };
+  const bg = dlgBg || (cs ? (cs.getPropertyValue('--dsw-alias-bg-layer-2') || '').trim() : '') || THEME_FALLBACK['--u-bg'];
+  set('--u-bg', bg);
+  for (const key of ['card', 'card2', 'card3', 'border', 'border2', 'blue', 'green', 'red', 'warn', 'tip']) {
+    let v = '';
+    if (cs) for (const n of THEME_VARS[key]) { v = (cs.getPropertyValue(n) || '').trim(); if (v) break; }
+    set('--u-' + key, v);
   }
+  // 文字类：与卡片背景做对比度校验，弱化文字看不清时自动换候选变量
+  const cardBg = document.documentElement.style.getPropertyValue('--u-card').trim() || bg;
+  const read = names => cs ? pickReadable(cs, names, cardBg) : '';
+  set('--u-text', read(THEME_VARS.text));
+  set('--u-text2', read(THEME_VARS.text2));
+  set('--u-muted', read(THEME_VARS.muted));
+  set('--u-muted2', read(THEME_VARS.muted2));
+  // tooltip 文字色与 tooltip 背景强对比（dsh 两种主题下 tooltip 底色深浅不同）
+  const tipBg = document.documentElement.style.getPropertyValue('--u-tip').trim() || THEME_FALLBACK['--u-tip'];
+  set('--u-tip-text', contrast('#111111', tipBg) >= 3 ? '#111111' : '#f9fafb');
 }
 
 /* ---------------- 折线图 ---------------- */
@@ -312,7 +376,8 @@ function renderDonut() {
 /* ---------------- 活跃度 + 用量趋势 tiles（顶部融合卡） ---------------- */
 function renderActivity() {
   const t = DATA.totals;
-  const today = officialDays(rangeDays());
+  // "今日"永远取最后一天，与时间范围选择无关
+  const today = officialDays(DATA.days.length ? [DATA.days[DATA.days.length - 1]] : []);
   const todayTokens = sumField(today, 'ofTokens');
   const tiles = [
     { v: fmtTokens(todayTokens), l: '今日 Token' },
