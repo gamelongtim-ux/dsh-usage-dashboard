@@ -36,7 +36,7 @@ npm install -g pnpm
 dsh plugin --profile web add file:/path/to/dsh-usage-dashboard
 
 # or straight from GitHub
-dsh plugin --profile web add github:<your-name>/dsh-usage-dashboard
+dsh plugin --profile web add github:gamelongtim-ux/dsh-usage-dashboard
 
 # then (re)start the web UI — bundles load at boot
 dsh web

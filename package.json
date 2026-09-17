@@ -13,10 +13,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-name>/dsh-usage-dashboard.git"
+    "url": "git+https://github.com/gamelongtim-ux/dsh-usage-dashboard.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-name>/dsh-usage-dashboard/issues"
+    "url": "https://github.com/gamelongtim-ux/dsh-usage-dashboard/issues"
   },
   "type": "module",
   "main": "./lib/plugin.js",

@@ -36,7 +36,7 @@ npm install -g pnpm
 dsh plugin --profile web add file:/path/to/dsh-usage-dashboard
 
 # 或直接从 GitHub 安装
-dsh plugin --profile web add github:<your-name>/dsh-usage-dashboard
+dsh plugin --profile web add github:gamelongtim-ux/dsh-usage-dashboard
 
 # 重启 Web UI（bundle 在启动时加载）
 dsh web
