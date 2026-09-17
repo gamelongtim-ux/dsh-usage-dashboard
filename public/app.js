@@ -1,7 +1,8 @@
 'use strict';
 /* dsh 用量总览 —— 纯前端，无依赖，图表手写 SVG。
    主题：从 dsh 宿主界面同步 --dsw-* 变量到本页 --u-*（Light/Dark/System 自动跟随）；
-   独立运行时使用 :root 里的暗色兜底值。 */
+   独立运行时使用 :root 里的暗色兜底值。
+   粒度：「今日」视图按小时（24 桶），近 7 日 / 近 30 日按天。 */
 
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
@@ -13,13 +14,9 @@ function svgEl(tag, attrs) {
 
 const PALETTE = ['#4C8DFF', '#3ECF8E', '#A78BFA', '#F87171', '#FB923C', '#22D3EE', '#FACC15', '#F472B6', '#34D399', '#60A5FA'];
 const OTHER_COLOR = '#8b929a';
-const HEAT_COLORS = ['#1b3a66', '#2563b8', '#3b82f6', '#7fb3f8'];
-
-/* 只统计 DeepSeek 官方模型（normalizeModel 归一化到官方 4 个显示名，其余第三方模型不计入） */
 
 let DATA = null;
 let RANGE = 7;
-let heatMode = 'daily';
 let barDim = 'model', barUnit = 'tokens';
 let chartTab = 'trend';
 const hiddenBars = new Set();
@@ -70,6 +67,26 @@ function tipHTML(title, rows) {
 /* ---------------- 数据辅助 ---------------- */
 function rangeDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - RANGE)); }
 function prevDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - 2 * RANGE), Math.max(0, n - RANGE)); }
+function todayKeyStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+/* 今日 24 个小时桶（无数据补零），hour 形如 '2026-09-17T14:00' */
+function todayHours() {
+  const map = new Map((DATA.hours || []).map(h => [h.date, h]));
+  const tk = todayKeyStr();
+  const out = [];
+  for (let h = 0; h < 24; h++) {
+    const key = tk + 'T' + String(h).padStart(2, '0') + ':00';
+    const src = map.get(key);
+    out.push(src || { date: key, byModel: {}, byTool: {} });
+  }
+  return out;
+}
+/* 当前范围的数据桶：今日=按小时，其余=按天 */
+function bucketDays() {
+  return RANGE === 1 ? officialDays(todayHours()) : officialDays(rangeDays());
+}
 
 /* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名，
    非 deepseek 官方模型返回 null（不参与统计）。 */
@@ -197,8 +214,7 @@ function applyTheme() {
     }
   } catch (_) { /* 独立模式或跨域 */ }
   const set = (local, v) => {
-    if (v) document.documentElement.style.setProperty(local, v);
-    else document.documentElement.style.setProperty(local, THEME_FALLBACK[local]);
+    document.documentElement.style.setProperty(local, v || THEME_FALLBACK[local]);
   };
   const bg = dlgBg || (cs ? (cs.getPropertyValue('--dsw-alias-bg-layer-2') || '').trim() : '') || THEME_FALLBACK['--u-bg'];
   set('--u-bg', bg);
@@ -207,14 +223,12 @@ function applyTheme() {
     if (cs) for (const n of THEME_VARS[key]) { v = (cs.getPropertyValue(n) || '').trim(); if (v) break; }
     set('--u-' + key, v);
   }
-  // 文字类：与卡片背景做对比度校验，弱化文字看不清时自动换候选变量
   const cardBg = document.documentElement.style.getPropertyValue('--u-card').trim() || bg;
   const read = names => cs ? pickReadable(cs, names, cardBg) : '';
   set('--u-text', read(THEME_VARS.text));
   set('--u-text2', read(THEME_VARS.text2));
   set('--u-muted', read(THEME_VARS.muted));
   set('--u-muted2', read(THEME_VARS.muted2));
-  // tooltip 文字色与 tooltip 背景强对比（dsh 两种主题下 tooltip 底色深浅不同）
   const tipBg = document.documentElement.style.getPropertyValue('--u-tip').trim() || THEME_FALLBACK['--u-tip'];
   set('--u-tip-text', contrast('#111111', tipBg) >= 3 ? '#111111' : '#f9fafb');
 }
@@ -232,7 +246,8 @@ function smoothPath(pts) {
 }
 
 function renderLineChart(container, opts) {
-  const { series, labels, yFmt, H = 300, rowFmt } = opts;
+  const { series, labels, yFmt, H = 300, rowFmt, labelX } = opts;
+  const lx = labelX || md;
   container.innerHTML = '';
   if (!labels.length || !series.length) return;
   const W = container.clientWidth || 860;
@@ -250,11 +265,11 @@ function renderLineChart(container, opts) {
     t.textContent = yFmt(gv);
     svg.appendChild(t);
   }
-  const step = Math.max(1, Math.ceil(labels.length / 7));
+  const step = Math.max(1, Math.ceil(labels.length / 8));
   labels.forEach((lb, i) => {
     if (i % step !== 0 && i !== labels.length - 1) return;
     const t = svgEl('text', { x: X(i), y: H - 7, 'text-anchor': 'middle', class: 'axx' });
-    t.textContent = md(lb);
+    t.textContent = lx(lb);
     svg.appendChild(t);
   });
 
@@ -288,7 +303,7 @@ function renderLineChart(container, opts) {
       dots[si].setAttribute('opacity', v == null ? 0 : 1);
       if (v != null) rows.push({ color: s.color, name: s.name, value: rowFmt ? rowFmt(v) : yFmt(v) });
     });
-    showTip(tipHTML(`${md(labels[idx])}${opts.tipSuffix ? ' - ' + opts.tipSuffix(idx) : ''}`, rows), ev.clientX, ev.clientY);
+    showTip(tipHTML(`${lx(labels[idx])}${opts.tipSuffix ? ' - ' + opts.tipSuffix(idx) : ''}`, rows), ev.clientX, ev.clientY);
   });
   overlay.addEventListener('mouseleave', () => {
     guide.setAttribute('opacity', 0);
@@ -301,7 +316,8 @@ function renderLineChart(container, opts) {
 
 /* ---------------- 每日 Token 趋势 ---------------- */
 function renderTrend() {
-  const days = officialDays(rangeDays());
+  const days = bucketDays();
+  const isHour = RANGE === 1;
   const models = modelTotalsOf(days).slice(0, 5);
   const leg = $('#trendLegend');
   leg.innerHTML = '';
@@ -318,6 +334,7 @@ function renderTrend() {
   }));
   renderLineChart($('#trendChart'), {
     series, labels, H: 300, yFmt: fmtTokens,
+    labelX: isHour ? (lb => lb.slice(11, 16)) : undefined,
     tipSuffix: i => fmtTokens(days[i].ofTokens) + ' tokens',
   });
 }
@@ -330,7 +347,7 @@ function arcPath(cx, cy, r, a0, a1) {
   return `M${x0},${y0} A${r},${r} 0 ${large} 1 ${x1},${y1}`;
 }
 function renderDonut() {
-  const days = officialDays(rangeDays());
+  const days = bucketDays();
   const models = modelTotalsOf(days);
   const total = models.reduce((s, m) => s + m.tokens, 0);
   const items = models.slice(0, 6).map((m, i) => ({ name: m.name, value: m.tokens, color: PALETTE[i % PALETTE.length] }));
@@ -373,137 +390,33 @@ function renderDonut() {
   }
 }
 
-/* ---------------- 活跃度 + 用量趋势 tiles（顶部融合卡） ---------------- */
+/* ---------------- 顶部统计（4 项） ---------------- */
 function renderActivity() {
   const t = DATA.totals;
-  // "今日"永远取最后一天，与时间范围选择无关
   const today = officialDays(DATA.days.length ? [DATA.days[DATA.days.length - 1]] : []);
   const todayTokens = sumField(today, 'ofTokens');
+  const cur = officialDays(rangeDays()), prev = officialDays(prevDays());
+  const hrC = hitRate(cur), hrP = hitRate(prev);
   const tiles = [
     { v: fmtTokens(todayTokens), l: '今日 Token' },
     { v: fmtTokens(t.tokens), l: '累计 Token 数' },
     { v: fmtTokens(DATA.peak.tokens), l: `峰值 Token 数 <span class="info" title="峰值出现在 ${DATA.peak.date ? cmd(DATA.peak.date) : '-'}">ⓘ</span>` },
-    { v: fmtDur(t.durationMs), l: '累计使用时长', mid: true },
-    { v: `${DATA.currentStreak} 天`, l: '当前连续天数' },
-    { v: `${DATA.longestStreak} 天`, l: '最长连续天数' },
+    { v: hrC == null ? '-' : Math.round(hrC * 100) + '%', d: hrC != null && hrP != null ? `<span class="delta ${hrC >= hrP ? 'up' : 'down'}">${hrC >= hrP ? '+' : ''}${Math.round((hrC - hrP) * 100)}%</span>` : '', l: 'Cache 命中率' },
   ];
   const box = $('#activityTiles');
   box.innerHTML = '';
   for (const x of tiles) {
     const d = document.createElement('div');
     d.className = 'tile';
-    d.innerHTML = `<div class="v${x.mid ? ' mid' : ''}">${x.v}</div><div class="l">${x.l}</div>`;
+    d.innerHTML = `<div class="v">${x.v}${x.d || ''}</div><div class="l">${x.l}</div>`;
     box.appendChild(d);
   }
 }
 
-function deltaHTML(cur, prev, suffix = '%') {
-  if (prev == null || !isFinite(prev) || prev === 0) return '';
-  const pct = (cur - prev) / Math.abs(prev) * 100;
-  const sign = pct >= 0 ? '+' : '';
-  return `<span class="delta ${pct >= 0 ? 'up' : 'down'}">${sign}${pct.toFixed(0)}${suffix}</span>`;
-}
-function renderUsageTiles() {
-  const cur = officialDays(rangeDays()), prev = officialDays(prevDays());
-  const hrC = hitRate(cur), hrP = hitRate(prev);
-  const tokC = sumField(cur, 'ofTokens'), tokP = sumField(prev, 'ofTokens');
-  const avgC = tokC / Math.max(1, cur.length), avgP = prev.length ? tokP / prev.length : null;
-  const box = $('#usageTiles');
-  box.innerHTML = '';
-  const tiles = [
-    { v: hrC == null ? '-' : Math.round(hrC * 100) + '%', d: hrC != null && hrP != null ? `<span class="delta ${hrC >= hrP ? 'up' : 'down'}">${hrC >= hrP ? '+' : ''}${Math.round((hrC - hrP) * 100)}%</span>` : '', l: 'Cache 命中率' },
-    { v: fmtTokens(tokC), d: deltaHTML(tokC, tokP), l: 'Token 总数' },
-    { v: fmtTokens(avgC), d: deltaHTML(avgC, avgP), l: '日均 Token' },
-  ];
-  for (const x of tiles) {
-    const d = document.createElement('div');
-    d.className = 'tile';
-    d.innerHTML = `<div class="v">${x.v}${x.d}</div><div class="l">${x.l}</div>`;
-    box.appendChild(d);
-  }
-}
-
-/* ---------------- Token 活动热力图（宽度自适应，无内部滚动） ---------------- */
-function kd(dt) {
-  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
-}
-function renderHeat() {
-  const box = $('#heatmap');
-  box.innerHTML = '';
-  if (!DATA.days.length) return;
-  const byDate = new Map(DATA.days.map(d => [d.date, d]));
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const width = box.clientWidth || 800;
-  const cols = Math.max(16, Math.floor((width + 3) / 16)); // 13px 格 + 3px 缝
-  const endWeekStart = new Date(today); endWeekStart.setDate(today.getDate() - today.getDay());
-  const start = new Date(endWeekStart); start.setDate(endWeekStart.getDate() - (cols - 1) * 7);
-
-  const colsArr = [];
-  for (const w = new Date(start); w <= endWeekStart; w.setDate(w.getDate() + 7)) {
-    const col = [];
-    for (let i = 0; i < 7; i++) { const d = new Date(w); d.setDate(w.getDate() + i); col.push(d); }
-    colsArr.push(col);
-  }
-  const daily = colsArr.map(col => col.map(dt => {
-    const k = kd(dt);
-    const d = byDate.get(k);
-    return { key: k, tokens: d ? d.tokens : 0, tools: d ? d.toolCalls : 0, valid: !!d };
-  }));
-  const weekly = daily.map(col => col.reduce((s, c) => s + c.tokens, 0));
-  const cumulative = []; let acc = 0;
-  for (const w of weekly) { acc += w; cumulative.push(acc); }
-
-  let max = 0;
-  if (heatMode === 'daily') max = Math.max(0, ...daily.flat().map(c => c.tokens));
-  else if (heatMode === 'weekly') max = Math.max(0, ...weekly);
-  else max = acc;
-  const level = v => v <= 0 || max <= 0 ? 0 : Math.min(4, Math.ceil(Math.sqrt(v / max) * 4));
-  const colorOf = v => v <= 0 ? null : HEAT_COLORS[level(v) - 1];
-  const colColor = weekly.map((w, i) => heatMode === 'weekly' ? colorOf(w) : heatMode === 'cumulative' ? colorOf(cumulative[i]) : null);
-
-  const grid = document.createElement('div');
-  grid.className = 'heat-grid';
-  const cells = [];
-  daily.forEach((col, ci) => {
-    col.forEach((c, ri) => {
-      const cell = document.createElement('div');
-      cell.className = 'heat-cell';
-      if (!c.valid) cell.classList.add('empty');
-      const bg = colColor[ci] || colorOf(c.tokens);
-      if (bg) cell.style.background = bg;
-      cell.dataset.i = ci * 7 + ri;
-      grid.appendChild(cell);
-      cells.push(c);
-    });
-  });
-  grid.addEventListener('mousemove', ev => {
-    const cell = ev.target.closest('.heat-cell');
-    if (!cell) { hideTip(); return; }
-    const c = cells[+cell.dataset.i];
-    showTip(tipHTML(cmd(c.key), [
-      { color: '#8b929a', name: 'tokens', value: fmtTokens(c.tokens) },
-      { color: '#8b929a', name: '工具调用', value: c.tools + ' 次' },
-    ]), ev.clientX, ev.clientY);
-  });
-  grid.addEventListener('mouseleave', hideTip);
-  box.appendChild(grid);
-
-  const months = document.createElement('div');
-  months.className = 'heat-months';
-  let prevM = -1;
-  daily.forEach((col, ci) => {
-    const sp = document.createElement('span');
-    const mid = col[Math.min(3, col.length - 1)];
-    const m = +mid.key.split('-')[1] - 1;
-    if (m !== prevM && ci < daily.length - 1) { sp.textContent = (m + 1) + '月'; prevM = m; }
-    months.appendChild(sp);
-  });
-  box.appendChild(months);
-}
-
-/* ---------------- 消耗堆叠柱 ---------------- */
+/* ---------------- 消耗堆叠柱（今日按小时，多日按天） ---------------- */
 function renderBars() {
-  const days = officialDays(rangeDays());
+  const days = bucketDays();
+  const isHour = RANGE === 1;
   const unitSeg = $('#unitSeg'), priceBtn = $('#priceBtn');
   let series = [], valueOf, fmtVal, totalLabel;
   if (barDim === 'model') {
@@ -528,13 +441,11 @@ function renderBars() {
     if (ts.length > 8) {
       const restNames = ts.slice(8).map(t => t.name);
       series.push({ key: '其他', color: OTHER_COLOR, rest: restNames });
-      valueOf = null;
     }
-    const valFn = (d, k) => d.byTool[k] || 0;
-    if (!valueOf) valueOf = (d, k) => {
+    valueOf = (d, k) => {
       const s = series.find(x => x.key === k);
       if (s && s.rest) return s.rest.reduce((acc, n) => acc + (d.byTool[n] || 0), 0);
-      return valFn(d, k);
+      return d.byTool[k] || 0;
     };
     fmtVal = v => fmtInt(v) + ' 次';
     totalLabel = v => '调用总量: <b>' + fmtInt(v) + ' 次</b>';
@@ -579,13 +490,13 @@ function renderBars() {
     svg.appendChild(t);
   }
   const slot = iw / days.length;
-  const bw = Math.max(5, Math.min(28, slot * 0.5));
+  const bw = Math.max(4, Math.min(28, isHour ? slot * 0.72 : slot * 0.5));
   const X = i => padL + slot * i + (slot - bw) / 2;
-  const step = Math.max(1, Math.ceil(days.length / 7));
+  const step = Math.max(1, Math.ceil(days.length / (isHour ? 8 : 7)));
   days.forEach((d, i) => {
     if (i % step !== 0 && i !== days.length - 1) return;
     const t = svgEl('text', { x: X(i) + bw / 2, y: H - 7, 'text-anchor': 'middle', class: 'axx' });
-    t.textContent = md(d.date);
+    t.textContent = isHour ? d.date.slice(11, 16) : md(d.date);
     svg.appendChild(t);
   });
   days.forEach((d, i) => {
@@ -608,16 +519,18 @@ function renderBars() {
       .map(ser => ({ color: ser.color, name: ser.key, value: fmtVal(valueOf(days[idx], ser.key)), raw: valueOf(days[idx], ser.key) }))
       .filter(r => r.raw > 0)
       .sort((a, b) => b.raw - a.raw);
-    showTip(tipHTML(`${md(days[idx].date)} · ${fmtVal(dayTotals[idx])}`, rows.length ? rows : [{ color: '#8b929a', name: '—', value: '0' }]), ev.clientX, ev.clientY);
+    const title = (isHour ? days[idx].date.slice(11, 16) : md(days[idx].date)) + ' · ' + fmtVal(dayTotals[idx]);
+    showTip(tipHTML(title, rows.length ? rows : [{ color: '#8b929a', name: '—', value: '0' }]), ev.clientX, ev.clientY);
   });
   overlay.addEventListener('mouseleave', hideTip);
   svg.appendChild(overlay);
   box.appendChild(svg);
 }
 
-/* ---------------- 系统健康度 ---------------- */
+/* ---------------- 系统健康度（今日按小时） ---------------- */
 function renderHealth() {
-  const days = officialDays(rangeDays());
+  const days = bucketDays();
+  const isHour = RANGE === 1;
   $('#healthRange').textContent = RANGE === 1 ? '今日' : RANGE === 7 ? '近 7 日' : '近 30 日';
   const names = modelTotalsOf(days).map(m => m.name)
     .filter(n => days.some(d => d.ofByModel[n] && d.ofByModel[n].spanTokens > 0))
@@ -641,6 +554,7 @@ function renderHealth() {
     series, labels: days.map(d => d.date), H: 240,
     yFmt: v => v >= 100 ? String(Math.round(v)) : v.toFixed(1),
     rowFmt: v => v.toFixed(1) + ' tok/s',
+    labelX: isHour ? (lb => lb.slice(11, 16)) : undefined,
   });
 }
 
@@ -693,7 +607,7 @@ function postHeight() {
 /* ---------------- 单价设置 ---------------- */
 const priceDlg = $('#priceDlg');
 function openPriceDlg() {
-  const days = officialDays(rangeDays());
+  const days = bucketDays();
   const names = new Set(modelTotalsOf(days).map(m => m.name));
   const saved = priceTable();
   for (const k in saved) names.add(k);
@@ -732,8 +646,6 @@ function renderAll() {
   $('#emptyBanner').style.display = empty ? '' : 'none';
   if (empty) { postHeight(); return; }
   renderActivity();
-  renderUsageTiles();
-  renderHeat();
   renderTrend();
   renderDonut();
   applyChartTab();
@@ -771,13 +683,6 @@ $('#rangeSeg').addEventListener('click', ev => {
   RANGE = +b.dataset.range;
   for (const x of $('#rangeSeg').children) x.classList.toggle('on', x === b);
   renderAll();
-});
-$('#heatSeg').addEventListener('click', ev => {
-  const b = ev.target.closest('button');
-  if (!b) return;
-  heatMode = b.dataset.mode;
-  for (const x of $('#heatSeg').children) x.classList.toggle('on', x === b);
-  renderHeat();
 });
 $('#chartTabSeg').addEventListener('click', ev => {
   const b = ev.target.closest('button');

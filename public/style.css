@@ -29,10 +29,9 @@ body {
 .wrap { max-width: 930px; margin: 0 auto; padding: 18px 16px 40px; }
 
 /* ---------- 顶栏 ---------- */
-.topbar { display: flex; justify-content: space-between; align-items: center; margin: 6px 2px 14px; flex-wrap: wrap; gap: 10px; }
+.brand-row { margin: 6px 2px 14px; }
 .brand { font-size: 17px; font-weight: 600; }
 .brand .sub { font-size: 12px; color: var(--u-muted); font-weight: 400; margin-left: 6px; }
-.topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lbl { color: var(--u-muted); font-size: 12.5px; }
 
 /* ---------- 通用 ---------- */
@@ -66,6 +65,7 @@ body {
 /* ---------- 顶部融合卡 ---------- */
 .bal-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 2px 4px 10px; }
 .bal-left { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bal-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bal-title { color: var(--u-muted); font-size: 12.5px; }
 .bal-val { font-size: 24px; font-weight: 650; letter-spacing: .2px; }
 .bal-val.err { font-size: 14px; font-weight: 500; color: var(--u-warn); }
