@@ -583,7 +583,7 @@ function renderTopCards() {
   const totalCost = allDays.reduce((s, d) => s + dayCostPrecise(d), 0);
   $('#totalCostVal').textContent = fmtMoney(totalCost, 'CNY');
   const sub = document.querySelector('.tcard:nth-of-type(2) .tsub');
-  if (sub) sub.textContent = `自 ${DATA.days.length ? cmd(DATA.days[0].date) : '-'} 起按官方现价分时估算（仅 dsh 日志内的官方模型）`;
+  if (sub) sub.textContent = `自 ${DATA.days.length ? cmd(DATA.days[0].date) : '-'}（dsh 日志起点）按官方现价分时估算；不含 dsh 之外的用量，历史价格差异可能带来偏差，准确数字以官方账单为准`;
 }
 function renderStats() {
   const days = bucketDays();
