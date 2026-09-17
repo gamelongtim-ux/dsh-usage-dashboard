@@ -132,7 +132,35 @@ function hitRate(days) {
 }
 function sumField(days, f) { return days.reduce((s, d) => s + (d[f] || 0), 0); }
 
-/* ---------------- 计费（官方价格表分时估算） ---------------- */
+/* ---------------- 计费（官方价格表逐小时精确分时） ---------------- */
+let officialHourMap = null; // date('YYYY-MM-DDTHH:00') -> official 化的小时桶
+function buildOfficialHours() {
+  officialHourMap = new Map(officialDays(DATA.hours || []).map(h => [h.date, h]));
+}
+function hourCost(hb) {
+  let cost = 0;
+  for (const [m, v] of Object.entries(hb.ofByModel || {})) {
+    const dp = modelPrices(m);
+    const peak = isPeakLocal(hb.date);
+    const miss = peak ? dp.missP : dp.missO;
+    const hit = peak ? dp.hitP : dp.hitO;
+    const out = peak ? dp.outP : dp.outO;
+    cost += ((v.input || 0) * miss + (v.cacheRead || 0) * hit + (v.output || 0) * out) / 1e6;
+  }
+  return cost;
+}
+/** 天费用：当天 24 个小时桶精确分时求和；小时数据缺失时回退按星期占比混合。 */
+function dayCostPrecise(day) {
+  if (!officialHourMap) buildOfficialHours();
+  const tk = day.date;
+  let cost = 0, found = false;
+  for (let h = 0; h < 24; h++) {
+    const hb = officialHourMap.get(tk + 'T' + String(h).padStart(2, '0') + ':00');
+    if (hb) { found = true; cost += hourCost(hb); }
+  }
+  if (found) return cost;
+  return dayCostBlended(day);
+}
 /* 官方价格（¥/百万 tokens）：高峰=周一至五 9:00-12:00、14:00-18:00（北京时间）；空闲为高峰一半。
    遗留 id（deepseek-v4-flash* 等）按官方说明由 V4.1-Flash 同价服务。 */
 const OFFICIAL_PRICES = {
@@ -164,31 +192,11 @@ function modelPrices(m) {
     outP: pick('outP', 'output'), outO: pick('outO', 'output'),
   };
 }
-/** 单桶费用估算：官方分时价（可被「单价设置」按字段覆盖）。 */
-function bucketCost(day) {
-  let cost = 0;
-  for (const [m, v] of Object.entries(day.ofByModel || {})) {
-    const dp = modelPrices(m);
-    const peak = isPeakLocal(day.date);
-    const miss = peak ? dp.missP : dp.missO;
-    const hit = peak ? dp.hitP : dp.hitO;
-    const out = peak ? dp.outP : dp.outO;
-    cost += ((v.input || 0) * miss + (v.cacheRead || 0) * hit + (v.output || 0) * out) / 1e6;
-  }
-  return cost;
-}
-/** 单模型单桶费用 */
-function modelCost(day, model) {
-  const v = day.ofByModel[model];
-  if (!v) return 0;
-  return bucketCost({ date: day.date, ofByModel: { [model]: v } });
-}
-/** 天桶费用：按星期的高峰时长占比混合高峰/空闲价（小时桶则精确分时）。 */
-function dayCost(day) {
-  if (day.date && day.date.includes('T')) return bucketCost(day);
+/** 天桶混合估算（仅当该天小时数据缺失时回退）。 */
+function dayCostBlended(day) {
   const d = new Date(day.date + 'T00:00:00');
   const weekday = d.getDay() >= 1 && d.getDay() <= 5;
-  const f = weekday ? 7 / 24 : 0; // 高峰小时占比
+  const f = weekday ? 7 / 24 : 0;
   let cost = 0;
   for (const [m, v] of Object.entries(day.ofByModel || {})) {
     const dp = modelPrices(m);
@@ -198,6 +206,29 @@ function dayCost(day) {
     cost += ((v.input || 0) * miss + (v.cacheRead || 0) * hit + (v.output || 0) * out) / 1e6;
   }
   return cost;
+}
+/** 单模型天费用：该天 24 个小时桶精确分时求和；缺失回退混合价。 */
+function dayModelCost(day, model) {
+  if (!officialHourMap) buildOfficialHours();
+  const tk = day.date;
+  let cost = 0, found = false;
+  for (let h = 0; h < 24; h++) {
+    const hb = officialHourMap.get(tk + 'T' + String(h).padStart(2, '0') + ':00');
+    if (!hb) continue;
+    const v = hb.ofByModel[model];
+    if (!v) continue;
+    found = true;
+    cost += hourCost({ date: hb.date, ofByModel: { [model]: v } });
+  }
+  if (found) return cost;
+  const dayView = officialDays([day])[0];
+  return dayCostBlended(dayView);
+}
+/** 单模型单小时桶费用 */
+function modelCost(day, model) {
+  const v = day.ofByModel[model];
+  if (!v) return 0;
+  return hourCost({ date: day.date, ofByModel: { [model]: v } });
 }
 
 /* ---------------- 主题桥：同步 dsh 宿主变量 ---------------- */
@@ -449,7 +480,7 @@ function renderCostChart() {
   let seriesFinal, valFn, fmtVal;
   if (barDim === 'model') {
     seriesFinal = series;
-    valFn = (d, k) => modelCost(d, k);
+    valFn = (d, k) => RANGE === 1 ? modelCost(d, k) : dayModelCost(d, k);
     fmtVal = v => fmtCost(v);
   } else {
     seriesFinal = [{ key: '__calls__', color: PALETTE[0] }];
@@ -549,15 +580,20 @@ function renderModelSections() {
 /* ---------------- 顶部卡与统计 ---------------- */
 function renderTopCards() {
   const allDays = officialDays(DATA.days);
-  const totalCost = allDays.reduce((s, d) => s + dayCost(d), 0);
+  const totalCost = allDays.reduce((s, d) => s + dayCostPrecise(d), 0);
   $('#totalCostVal').textContent = fmtMoney(totalCost, 'CNY');
+  const sub = document.querySelector('.tcard:nth-of-type(2) .tsub');
+  if (sub) sub.textContent = `自 ${DATA.days.length ? cmd(DATA.days[0].date) : '-'} 起按官方现价分时估算（仅 dsh 日志内的官方模型）`;
 }
 function renderStats() {
   const days = bucketDays();
-  const cost = days.reduce((s, d) => s + dayCost(d), 0);
+  const cost = RANGE === 1
+    ? sumField(days, '__cost__') // 占位，实际在下方按小时
+    : days.reduce((s, d) => s + dayCostPrecise(d), 0);
   const reqs = sumField(days, 'reqs') || sumField(days, 'reqTotal');
   const tokens = sumField(days, 'ofTokens');
-  $('#statCost').textContent = fmtMoney(cost, 'CNY');
+  const costFinal = RANGE === 1 ? days.reduce((s, d) => s + hourCost(d), 0) : cost;
+  $('#statCost').textContent = fmtMoney(costFinal, 'CNY');
   $('#statReqs').textContent = fmtInt(reqs);
   $('#statTokens').textContent = fmtInt(tokens);
 }
@@ -606,7 +642,7 @@ $('#exportBtn').addEventListener('click', () => {
   for (const d of days) {
     const t = isHour() ? d.date.slice(11, 16) : d.date;
     const models = Object.keys(d.ofByModel);
-    if (!models.length) rows.push([t, '-', '', '', '', '', fmtTokens(d.ofTokens), dayCost(d).toFixed(4)]);
+    if (!models.length) rows.push([t, '-', '', '', '', '', fmtTokens(d.ofTokens), dayCostPrecise(d).toFixed(4)]);
     for (const m of models) {
       const v = d.ofByModel[m];
       rows.push([t, m, v.reqs || 0, v.input || 0, v.cacheRead || 0, v.output || 0, v.tokens || 0, modelCostOf(d, m).toFixed(4)]);
@@ -623,7 +659,7 @@ function isHour() { return RANGE === 1; }
 function modelCostOf(day, model) {
   const v = day.ofByModel[model];
   if (!v) return 0;
-  return bucketCost({ date: day.date, ofByModel: { [model]: v } });
+  return hourCost({ date: day.date, ofByModel: { [model]: v } });
 }
 
 /* ---------------- 高度自适应 ---------------- */
@@ -720,6 +756,7 @@ function renderAll() {
   const empty = !DATA.days.length;
   $('#emptyBanner').style.display = empty ? '' : 'none';
   if (empty) { postHeight(); return; }
+  buildOfficialHours();
   renderTopCards();
   renderStats();
   renderCostChart();
