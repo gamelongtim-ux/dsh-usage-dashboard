@@ -17,6 +17,11 @@ DeepSeek Harness（`dsh`）的**用量仪表盘插件**。解析 `~/.dsh/session
 - **活跃度**：累计 Token、峰值、累计使用时长、当前/最长连续天数，53 周 **热力图**（每日/每周/累计着色）
 - **用量趋势**：Cache 命中率、Token 总量与日均（对比上一等长周期）；堆叠柱状图支持 **模型/工具 × Token/费用估算**（单价表 ¥/百万 tokens，存浏览器本地可编辑）
 - **系统健康度**：各模型高峰期均 **Decode 速度**（tokens/s，从日志流式时间戳增量重建）
+- **余额卡片**：实时显示 DeepSeek 开放平台余额（官方 /user/balance 接口，60s 自动刷新）
+- **主题自适应**：跟随 dsh Web UI 的 浅色/深色/系统 外观，自动换色
+- **只统计官方模型**：仅计入 `deepseek-*` 官方模型，经 dsh 接入的第三方模型不参与统计
+
+时间范围支持 **今日 / 近 7 日 / 近 30 日**。
 
 ## 环境要求
 
@@ -81,6 +86,7 @@ dsh 基于 cordis 风格插件体系，插件是声明了如下字段的 npm 包
 - Decode 速度：v3 用 `data.stream` 的 `time0+dt[]` 增量时间戳重建流式跨度；旧版用同 `(turn,step)` chunk 时间跨度；<200ms 不计。
 - 时长：会话内相邻事件间隔 5 分钟封顶；连续天数按"当日 tokens>0"。
 - 个别旧文件有 `time≈0` 脏事件，2020-01-01 前一律丢弃（`/api/data` 的 `dirty` 字段可诊断）。
+- 余额：后端调 `https://api.deepseek.com/user/balance`，Key 依次取 环境变量 `DEEPSEEK_API_KEY` → `~/.dsh/.credentials.yaml` → 页面里设置的 Key（仅存浏览器，优先级最高），服务端缓存 60s。
 
 ## 目录结构
 

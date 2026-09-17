@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh 用量总览 · DeepSeek Harness</title><link rel="stylesheet" href="style.css">
+<title>dsh 用量总览 · DeepSeek Harness</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="wrap">
@@ -12,6 +13,7 @@
     <div class="topbar-right">
       <span class="lbl">时间范围</span>
       <div class="seg" id="rangeSeg">
+        <button data-range="1">今日</button>
         <button data-range="7" class="on">近 7 日</button>
         <button data-range="30">近 30 日</button>
       </div>
@@ -21,26 +23,23 @@
 
   <div id="emptyBanner" class="card empty" style="display:none">未找到 dsh 会话记录</div>
 
-  <div class="card">
-    <div class="card-head">
-      <div class="card-title">每日 Token 趋势图</div>
-      <div class="legend" id="trendLegend"></div>
+  <!-- 顶部融合卡：余额 + 活跃度 + 用量趋势 -->
+  <div class="card" id="overviewCard">
+    <div class="bal-row">
+      <div class="bal-left">
+        <span class="dot" id="balDot"></span>
+        <span class="bal-title">DeepSeek API 余额</span>
+        <span class="bal-val" id="balVal">--</span>
+        <span class="bal-sub" id="balSub"></span>
+      </div>
+      <button class="btn small" id="balKeyBtn">设置 Key</button>
     </div>
-    <div id="trendChart" class="chart"></div>
+    <div class="ov-sep"></div>
+    <div class="tiles six" id="activityTiles"></div>
+    <div class="ov-sep thin"></div>
+    <div class="tiles three" id="usageTiles"></div>
   </div>
 
-  <div class="card">
-    <div class="card-head"><div class="card-title">模型用量</div></div>
-    <div class="donut-wrap">
-      <div id="donut" class="donut"></div>
-      <div id="donutLegend" class="mrows"></div>
-    </div>
-  </div>
-
-  <div class="sec">活跃度</div>
-  <div class="card">
-    <div class="tiles" id="activityTiles"></div>
-  </div>
   <div class="card">
     <div class="card-head">
       <div class="card-title">Token 活动</div>
@@ -53,10 +52,24 @@
     <div id="heatmap"></div>
   </div>
 
-  <div class="sec">用量趋势</div>
   <div class="card">
-    <div class="tiles three" id="usageTiles"></div>
+    <div class="card-head">
+      <div class="card-title">用量图表</div>
+      <div class="seg" id="chartTabSeg">
+        <button data-tab="trend" class="on">每日 Token 趋势</button>
+        <button data-tab="donut">模型用量</button>
+      </div>
+    </div>
+    <div id="trendPane">
+      <div class="legend" id="trendLegend"></div>
+      <div id="trendChart" class="chart"></div>
+    </div>
+    <div id="donutPane" class="donut-wrap" style="display:none">
+      <div id="donut" class="donut"></div>
+      <div id="donutLegend" class="mrows"></div>
+    </div>
   </div>
+
   <div class="card">
     <div class="card-head">
       <div class="toggles">
@@ -76,7 +89,6 @@
     <div id="barChart" class="chart"></div>
   </div>
 
-  <div class="sec">系统健康度</div>
   <div class="card">
     <div class="card-head">
       <div class="card-title">系统健康度</div>
@@ -88,10 +100,22 @@
   </div>
 
   <div class="foot" id="foot"></div>
-  <!-- 独立模式与插件模式（/usage-dashboard/）共用此页，API 用相对路径 -->
 </div>
 
 <div class="tip" id="tip" style="display:none"></div>
+
+<dialog id="keyDlg">
+  <div class="dlg-title">DeepSeek API Key <span class="sub">（仅保存在本浏览器，用于查询平台余额）</span></div>
+  <div class="dlg-body">
+    <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off">
+    <div class="note">留空并保存即清除已存 Key。不设置时插件会尝试读取 dsh 凭据里的 DEEPSEEK_API_KEY。</div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" id="keyClear">清除</button>
+    <button class="btn" id="keyCancel">取消</button>
+    <button class="btn primary" id="keySave">保存</button>
+  </div>
+</dialog>
 
 <dialog id="priceDlg">
   <div class="dlg-title">费用估算单价 <span class="sub">（¥ / 百万 tokens，仅保存在本浏览器）</span></div>

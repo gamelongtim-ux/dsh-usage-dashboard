@@ -15,8 +15,11 @@ Once installed, a **Usage dashboard** entry appears in **Settings → Plugins** 
 - **Activity** — all-time totals, peak day, total active time, current/longest streaks, plus a 53-week **heatmap** (daily / weekly / cumulative coloring)
 - **Usage trend** — cache-hit rate, token totals and daily average with previous-period deltas; stacked bars by **model or tool**, in tokens or an **estimated cost** (editable ¥/M-token price table stored in your browser)
 - **System health** — per-model peak-time average **decode speed** (tokens/s), reconstructed from the stream timestamp deltas in the logs
+- **DeepSeek balance card** — live account balance from the official `/user/balance` endpoint (auto-refresh every 60s)
+- **Theme aware** — follows the dsh web UI Light / Dark / System appearance automatically
+- **Official models only** — stats cover DeepSeek official models (`deepseek-*`); third-party models routed through dsh are excluded
 
-The UI is currently Chinese (matching the author's locale); PRs for i18n are welcome.
+Ranges: **Today / last 7 days / last 30 days**. The UI is currently Chinese (matching the author's locale); PRs for i18n are welcome.
 
 ## Requirements
 
@@ -81,6 +84,7 @@ dsh is built on a cordis-style plugin system. A plugin is an npm package whose m
 - Decode speed: v3 logs carry per-message `stream` chunks with `time0 + dt[]` delta timestamps; older logs fall back to the (turn, step) chunk time span. Spans under 200 ms are ignored.
 - Active time sums inter-event gaps capped at 5 minutes; streaks count days with `tokens > 0`.
 - A few legacy files contain events with `time ≈ 0`; everything before 2020-01-01 is discarded (surfaced in the `dirty` field of `/api/data`).
+- Balance: the plugin calls `https://api.deepseek.com/user/balance` with a key resolved from the `DEEPSEEK_API_KEY` env var or `~/.dsh/.credentials.yaml`; a key set in the dashboard (stored in your browser only) takes precedence. 60s server-side cache.
 
 ## Repository layout
 

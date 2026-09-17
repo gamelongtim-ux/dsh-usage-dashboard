@@ -6,6 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aggregate } from './lib/aggregate.js';
+import { getBalance } from './lib/balance.js';
 
 const PORT = Number(process.env.PORT || 7900);
 const PUB = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -18,6 +19,13 @@ const server = http.createServer((req, res) => {
     try { data = aggregate(); } catch (err) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: String(err && err.message || err) })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(data));
+    return;
+  }
+  if (url.pathname === '/api/balance') {
+    const headerKey = req.headers['x-dsh-key'];
+    getBalance(typeof headerKey === 'string' ? headerKey : undefined)
+      .then(b => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)); })
+      .catch(err => { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String(err && err.message || err) })); });
     return;
   }
   let p = url.pathname === '/' ? '/index.html' : url.pathname;
