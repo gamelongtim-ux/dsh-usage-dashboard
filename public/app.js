@@ -164,8 +164,10 @@ function hourCost(hb) {
   }
   return cost;
 }
-/** 天费用：当天 24 个小时桶精确分时求和；小时数据缺失时回退按星期占比混合。 */
+/** 天费用：当天 24 个小时桶精确分时求和；小时数据缺失时回退按星期占比混合。
+ *  注意：传入的也可能是小时桶（今天/昨天视图），此时直接按该小时精确计价。 */
 function dayCostPrecise(day) {
+  if (day.date && day.date.includes('T')) return hourCost(day);
   if (!officialHourMap) buildOfficialHours();
   const tk = day.date;
   let cost = 0, found = false;
@@ -602,7 +604,7 @@ function renderTopCards() {
 }
 function renderStats() {
   const days = bucketDays();
-  const cost = days.reduce((s, d) => s + dayCostPrecise(d), 0);
+  const cost = isHourly() ? days.reduce((s, d) => s + hourCost(d), 0) : days.reduce((s, d) => s + dayCostPrecise(d), 0);
   const reqs = sumField(days, 'reqs') || sumField(days, 'reqTotal');
   const tokens = sumField(days, 'ofTokens');
   $('#statCost').textContent = fmtMoney(cost, 'CNY');
