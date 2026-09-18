@@ -16,7 +16,7 @@ const PALETTE = ['#4C8DFF', '#3ECF8E', '#A78BFA', '#F87171', '#FB923C', '#22D3EE
 const OTHER_COLOR = '#8b929a';
 
 let DATA = null;
-let RANGE = 1;
+let RANGE = '7';
 let barDim = 'model';
 const hiddenBars = new Set();
 
@@ -64,24 +64,39 @@ function tipHTML(title, rows) {
 }
 
 /* ---------------- 数据辅助 ---------------- */
-function rangeDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - RANGE)); }
-function prevDays() { const n = DATA.days.length; return DATA.days.slice(Math.max(0, n - 2 * RANGE), Math.max(0, n - RANGE)); }
-function todayKeyStr() {
-  const d = new Date();
+function rangeDays() {
+  const n = DATA.days.length;
+  if (RANGE === '1') return DATA.days.slice(n - 1);
+  if (RANGE === 'y') return DATA.days.slice(Math.max(0, n - 2), n - 1);
+  return DATA.days.slice(Math.max(0, n - Number(RANGE)));
+}
+function prevDays() {
+  const n = DATA.days.length;
+  if (RANGE === '1') return DATA.days.slice(Math.max(0, n - 2), n - 1);
+  if (RANGE === 'y') return DATA.days.slice(Math.max(0, n - 3), n - 2);
+  return DATA.days.slice(Math.max(0, n - 2 * Number(RANGE)), Math.max(0, n - Number(RANGE)));
+}
+function dayKeyOffset(daysBack) {
+  const d = new Date(); d.setDate(d.getDate() - daysBack);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-function todayHours() {
+function todayKeyStr() { return dayKeyOffset(0); }
+function hoursForDay(key) {
   const map = new Map((DATA.hours || []).map(h => [h.date, h]));
-  const tk = todayKeyStr();
   const out = [];
   for (let h = 0; h < 24; h++) {
-    const key = tk + 'T' + String(h).padStart(2, '0') + ':00';
-    out.push(map.get(key) || { date: key, byModel: {}, byTool: {} });
+    const kk = key + 'T' + String(h).padStart(2, '0') + ':00';
+    out.push(map.get(kk) || { date: kk, byModel: {}, byTool: {} });
   }
   return out;
 }
+function todayHours() { return hoursForDay(dayKeyOffset(0)); }
+function yesterdayHours() { return hoursForDay(dayKeyOffset(1)); }
+const isHourly = () => RANGE === '1' || RANGE === 'y';
 function bucketDays() {
-  return RANGE === 1 ? officialDays(todayHours()) : officialDays(rangeDays());
+  if (RANGE === '1') return officialDays(todayHours());
+  if (RANGE === 'y') return officialDays(yesterdayHours());
+  return officialDays(rangeDays());
 }
 
 /* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名 */
@@ -405,7 +420,7 @@ function renderLineChart(container, opts) {
 /* ---------------- 堆叠柱状图 ---------------- */
 function renderStackedBars(container, opts) {
   const { days, series, valueOf, fmtVal, H = 280, labelX, title } = opts;
-  const isHour = RANGE === 1;
+  const isHour = isHourly();
   const lx = labelX || md;
   container.innerHTML = '';
   if (!days.length || !series.length) return;
@@ -472,7 +487,7 @@ function renderStackedBars(container, opts) {
 /* ---------------- 消费金额图 + 图例 ---------------- */
 function renderCostChart() {
   const days = bucketDays();
-  const isHour = RANGE === 1;
+  const isHour = isHourly();
   const models = modelTotalsOf(days);
   const series = models.map((m, i) => ({ key: m.name, color: PALETTE[i % PALETTE.length] }));
   const valueOf = (d, k) => k === '__cost__' ? d.cost : modelCost(d, k);
@@ -480,7 +495,7 @@ function renderCostChart() {
   let seriesFinal, valFn, fmtVal;
   if (barDim === 'model') {
     seriesFinal = series;
-    valFn = (d, k) => RANGE === 1 ? modelCost(d, k) : dayModelCost(d, k);
+    valFn = (d, k) => isHourly() ? modelCost(d, k) : dayModelCost(d, k);
     fmtVal = v => fmtCost(v);
   } else {
     seriesFinal = [{ key: '__calls__', color: PALETTE[0] }];
@@ -518,7 +533,7 @@ function renderCostChart() {
 /* ---------------- 每模型分区（请求次数面积图 + Tokens 柱状图） ---------------- */
 function renderModelSections() {
   const days = bucketDays();
-  const isHour = RANGE === 1;
+  const isHour = isHourly();
   const models = modelTotalsOf(days).filter(m => m.tokens > 0 || m.reqs > 0);
   const box = $('#modelSections');
   box.innerHTML = '';
@@ -587,13 +602,10 @@ function renderTopCards() {
 }
 function renderStats() {
   const days = bucketDays();
-  const cost = RANGE === 1
-    ? sumField(days, '__cost__') // 占位，实际在下方按小时
-    : days.reduce((s, d) => s + dayCostPrecise(d), 0);
+  const cost = days.reduce((s, d) => s + dayCostPrecise(d), 0);
   const reqs = sumField(days, 'reqs') || sumField(days, 'reqTotal');
   const tokens = sumField(days, 'ofTokens');
-  const costFinal = RANGE === 1 ? days.reduce((s, d) => s + hourCost(d), 0) : cost;
-  $('#statCost').textContent = fmtMoney(costFinal, 'CNY');
+  $('#statCost').textContent = fmtMoney(cost, 'CNY');
   $('#statReqs').textContent = fmtInt(reqs);
   $('#statTokens').textContent = fmtInt(tokens);
 }
@@ -651,11 +663,11 @@ $('#exportBtn').addEventListener('click', () => {
   const csv = '\ufeff' + rows.map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `dsh-usage-${todayKeyStr()}${RANGE === 1 ? '-hourly' : ''}.csv`;
+  a.download = `dsh-usage-${todayKeyStr()}${isHourly() ? '-hourly' : ''}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 });
-function isHour() { return RANGE === 1; }
+function isHour() { return isHourly(); }
 function modelCostOf(day, model) {
   const v = day.ofByModel[model];
   if (!v) return 0;
@@ -769,8 +781,8 @@ function renderAll() {
 
 function renderHealth() {
   const days = bucketDays();
-  const isHour = RANGE === 1;
-  $('#healthRange').textContent = RANGE === 1 ? '今天' : RANGE === 7 ? '近 7 天' : '近 30 天';
+  const isHour = isHourly();
+  $('#healthRange').textContent = RANGE === '1' ? '今天' : RANGE === 'y' ? '昨天' : RANGE === '7' ? '近 7 天' : '近 30 天';
   const names = modelTotalsOf(days).map(m => m.name)
     .filter(n => days.some(d => d.ofByModel[n] && d.ofByModel[n].spanTokens > 0))
     .slice(0, 4);
@@ -814,7 +826,7 @@ async function load() {
 $('#rangeSeg').addEventListener('click', ev => {
   const b = ev.target.closest('button');
   if (!b) return;
-  RANGE = +b.dataset.range;
+  RANGE = b.dataset.range;
   for (const x of $('#rangeSeg').children) x.classList.toggle('on', x === b);
   renderAll();
 });
