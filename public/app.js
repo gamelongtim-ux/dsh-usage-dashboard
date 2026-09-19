@@ -99,22 +99,18 @@ function bucketDays() {
   return officialDays(rangeDays());
 }
 
-/* 官方模型归一化：日志里的历史/限时 id 全部映射到 dsh 官方 provider 的 4 个模型显示名 */
-function normalizeModel(name) {
+/* 官方模型分桶：与平台一致——退役/限时 id 均由 deepseek-flash 系列服务，合并为一个计费桶 */
+function modelFamily(name) {
   const m = String(name || '').toLowerCase();
   if (!m.startsWith('deepseek-')) return null;
-  if (m === 'deepseek-flash' || m.includes('v4.1-flash')) return 'DeepSeek-V4.1-Flash';
-  if (m.includes('vision')) return 'DeepSeek-V4-Flash-Vision-Exp';
-  if (m.includes('v4-pro') || m.includes('pro')) return 'DeepSeek-V4-Pro';
-  if (m.includes('v4-flash') || m === 'deepseek-v4') return 'DeepSeek-V4-Flash';
-  return 'DeepSeek-V4.1-Flash';
+  return m.includes('pro') ? 'deepseek-v4-pro' : 'deepseek-flash';
 }
 function officialDays(days) {
   return days.map(d => {
     const bm = {};
     let tokens = 0, input = 0, cacheRead = 0;
     for (const [m, v] of Object.entries(d.byModel || {})) {
-      const n = normalizeModel(m);
+      const n = modelFamily(m);
       if (!n) continue;
       const t = bm[n] || (bm[n] = { tokens: 0, input: 0, output: 0, cacheRead: 0, spanMs: 0, spanTokens: 0, reqs: 0 });
       for (const k of ['tokens', 'input', 'output', 'cacheRead', 'spanMs', 'spanTokens', 'reqs']) t[k] += v[k] || 0;
@@ -181,10 +177,8 @@ function dayCostPrecise(day) {
 /* 官方价格（¥/百万 tokens）：高峰=周一至五 9:00-12:00、14:00-18:00（北京时间）；空闲为高峰一半。
    遗留 id（deepseek-v4-flash* 等）按官方说明由 V4.1-Flash 同价服务。 */
 const OFFICIAL_PRICES = {
-  'DeepSeek-V4.1-Flash': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
-  'DeepSeek-V4-Flash': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
-  'DeepSeek-V4-Flash-Vision-Exp': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
-  'DeepSeek-V4-Pro': { hitP: 0.3, hitO: 0.15, missP: 9, missO: 4.5, outP: 27, outO: 13.5 },
+  'deepseek-flash': { hitP: 0.04, hitO: 0.02, missP: 2, missO: 1, outP: 8, outO: 4 },
+  'deepseek-v4-pro': { hitP: 0.3, hitO: 0.15, missP: 9, missO: 4.5, outP: 27, outO: 13.5 },
 };
 function priceTable() {
   try { return JSON.parse(localStorage.getItem('dshPrices_v1') || '{}'); } catch (_) { return {}; }
@@ -197,7 +191,7 @@ function isPeakLocal(dateLike) {
 }
 /** 模型分时单价：用户自定义（字段级回落）否则内置官方价。 */
 function modelPrices(m) {
-  const base = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['DeepSeek-V4.1-Flash'];
+  const base = OFFICIAL_PRICES[m] || OFFICIAL_PRICES['deepseek-flash'];
   const custom = priceTable()[m] || {};
   const pick = (k, fb) => {
     const v = parseFloat(custom[k]);
@@ -520,7 +514,7 @@ function renderCostChart() {
   });
   const vis = seriesFinal.filter(s => !hiddenBars.has(s.key));
   const grand = days.reduce((acc, d) => acc + vis.reduce((s, ser) => s + valFn(d, ser.key), 0), 0);
-  $('#costChartTotal').textContent = (isHour ? '今日 ' : RANGE === 7 ? '近 7 天 ' : '近 30 天 ') + fmtVal(grand);
+  $('#costChartTotal').textContent = (RANGE === '1' ? '今日 ' : RANGE === 'y' ? '昨日 ' : RANGE === '7' ? '近 7 天 ' : '近 30 天 ') + fmtVal(grand);
 
   renderStackedBars($('#costChart'), {
     days,
@@ -610,6 +604,20 @@ function renderStats() {
   $('#statCost').textContent = fmtMoney(cost, 'CNY');
   $('#statReqs').textContent = fmtInt(reqs);
   $('#statTokens').textContent = fmtInt(tokens);
+
+  // 高峰/空闲费用拆分（今天/昨天为小时桶，其余按天的小时桶汇总）
+  if (!officialHourMap) buildOfficialHours();
+  let peak = 0, off = 0;
+  const addSplit = hb => { if (isPeakLocal(hb.date)) peak += hourCost(hb); else off += hourCost(hb); };
+  for (const d of days) {
+    if (d.date.includes('T')) { addSplit(d); continue; }
+    for (let h = 0; h < 24; h++) {
+      const hb = officialHourMap.get(d.date + 'T' + String(h).padStart(2, '0') + ':00');
+      if (hb) addSplit(hb);
+    }
+  }
+  const pn = $('#peakNote');
+  if (pn) pn.textContent = '其中高峰时段 ¥' + peak.toFixed(2) + ' · 空闲时段 ¥' + off.toFixed(2) + '（高峰 = 工作日 9–12 / 14–18 点）';
 }
 
 /* ---------------- 余额 ---------------- */
@@ -841,6 +849,23 @@ $('#dimSeg').addEventListener('click', ev => {
   renderCostChart();
 });
 $('#refreshBtn').addEventListener('click', () => { load(); loadBalance(); });
+
+// 自动刷新开关（60 秒）
+const autoBtn = $('#autoBtn');
+let autoTimer = null;
+function setAuto(on) {
+  try { localStorage.setItem('dshAutoRefresh', on ? '1' : '0'); } catch (_) {}
+  autoBtn.textContent = '自动刷新: ' + (on ? '开' : '关');
+  autoBtn.classList.toggle('primary', on);
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (on) autoTimer = setInterval(() => { load(); loadBalance(); }, 60000);
+}
+autoBtn.addEventListener('click', () => {
+  let cur = false;
+  try { cur = localStorage.getItem('dshAutoRefresh') === '1'; } catch (_) {}
+  setAuto(cur !== true);
+});
+try { if (localStorage.getItem('dshAutoRefresh') === '1') setAuto(true); } catch (_) {}
 
 let rsTimer = null;
 window.addEventListener('resize', () => {
