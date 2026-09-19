@@ -618,12 +618,23 @@ function renderModelSections() {
 }
 
 /* ---------------- 顶部卡与统计 ---------------- */
+function calibData() {
+  try { return JSON.parse(localStorage.getItem('dshCostCalib') || 'null'); } catch (_) { return null; }
+}
 function renderTopCards() {
   const allDays = officialDays(DATA.days);
   const totalCost = allDays.reduce((s, d) => s + dayCostPrecise(d), 0);
-  $('#totalCostVal').textContent = fmtMoney(totalCost, 'CNY');
+  const calib = calibData();
+  const val = $('#totalCostVal');
   const sub = document.querySelector('.tcard:nth-of-type(2) .tsub');
-  if (sub) sub.textContent = `自 ${DATA.days.length ? cmd(DATA.days[0].date) : '-'}（dsh 日志起点）按官方现价分时估算；不含 dsh 之外的用量，历史价格差异可能带来偏差，准确数字以官方账单为准`;
+  if (calib && isFinite(calib.base)) {
+    const since = totalCost - calib.atEstimate; // 校准之后 dsh 新增的估算
+    val.textContent = fmtMoney(calib.base + Math.max(0, since), 'CNY');
+    if (sub) sub.textContent = `平台校准 ¥${calib.base.toFixed(2)}（${calib.at}）+ 此后 dsh 新增估算 ¥${Math.max(0, since).toFixed(2)}；点「校准」可更新`;
+  } else {
+    val.textContent = fmtMoney(totalCost, 'CNY');
+    if (sub) sub.textContent = `自 ${DATA.days.length ? cmd(DATA.days[0].date) : '-'}（dsh 日志起点）按官方现价分时估算；不含 dsh 之外的用量，历史价格差异可能带来偏差，准确数字以官方账单为准`;
+  }
 }
 function renderStats() {
   const days = bucketDays();
@@ -712,6 +723,36 @@ function modelCostOf(day, model) {
   if (!v) return 0;
   return hourCost({ date: day.date, ofByModel: { [model]: v } });
 }
+
+/* ---------------- 累计消费校准 ---------------- */
+const calibDlg = $('#calibDlg');
+$('#calibLink').addEventListener('click', e => {
+  e.preventDefault();
+  const c = calibData();
+  $('#calibInput').value = c && isFinite(c.base) ? c.base : '';
+  calibDlg.showModal();
+  attachDialogCenter(calibDlg);
+});
+$('#calibCancel').addEventListener('click', () => calibDlg.close());
+$('#calibClear').addEventListener('click', () => {
+  try { localStorage.removeItem('dshCostCalib'); } catch (_) {}
+  calibDlg.close();
+  renderAll();
+});
+$('#calibSave').addEventListener('click', () => {
+  const v = parseFloat($('#calibInput').value);
+  if (isFinite(v) && v >= 0) {
+    try {
+      localStorage.setItem('dshCostCalib', JSON.stringify({
+        base: v,
+        at: new Date().toLocaleDateString('zh-CN'),
+        atEstimate: officialDays(DATA.days).reduce((s, d) => s + dayCostPrecise(d), 0),
+      }));
+    } catch (_) {}
+  }
+  calibDlg.close();
+  renderAll();
+});
 
 /* ---------------- 高度自适应 ---------------- */
 /* ---------------- 弹窗定位（嵌入模式：跟随宿主可视区域居中） ---------------- */

@@ -26,7 +26,7 @@
       <div class="tsub" id="balSub"></div>
     </div>
     <div class="tcard">
-      <div class="tl">累计消费金额 <span class="sub">(dsh 日志估算)</span> · <a class="link" href="https://platform.deepseek.com/usage" target="_blank" rel="noreferrer">官方账单</a></div>
+      <div class="tl">累计消费金额 · <a class="link" href="https://platform.deepseek.com/usage" target="_blank" rel="noreferrer">官方账单</a> · <a class="link" href="#" id="calibLink">校准</a></div>
       <div class="trow">
         <div class="tv" id="totalCostVal">--</div>
       </div>
@@ -105,6 +105,19 @@
     <button class="btn" id="keyClear">清除</button>
     <button class="btn" id="keyCancel">取消</button>
     <button class="btn primary" id="keySave">保存</button>
+  </div>
+</dialog>
+
+<dialog id="calibDlg">
+  <div class="dlg-title">校准累计消费 <span class="sub">（填入官方账单页显示的累计消费金额，实现从首次使用开始的完整口径）</span></div>
+  <div class="dlg-body">
+    <input id="calibInput" type="number" step="any" min="0" placeholder="例如 121.40" autocomplete="off">
+    <div class="note">校准后：显示值 = 平台累计(校准时) + 此后 dsh 新增用量的估算。清除则回到纯日志估算口径。仅保存在本浏览器。</div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" id="calibClear">清除校准</button>
+    <button class="btn" id="calibCancel">取消</button>
+    <button class="btn primary" id="calibSave">保存</button>
   </div>
 </dialog>
 
